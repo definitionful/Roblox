@@ -1,0 +1,1177 @@
+if getgenv()._UnloadPreviousInstance then
+    pcall(getgenv()._UnloadPreviousInstance)
+end
+
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/refs/heads/main/Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/definitionful/Roblox/refs/heads/main/Site%20Phoenix/ThemeManager"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/refs/heads/main/addons/SaveManager.lua"))()
+
+getgenv()._UnloadPreviousInstance = function()
+    if Library and not Library.Unloaded then
+        Library:Unload()
+    end
+end
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Teams = game:GetService("Teams")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
+
+local LocalPlayer = Players.LocalPlayer
+
+local m_huge = math.huge
+local m_random = math.random
+local m_floor = math.floor
+local m_clamp = math.clamp
+local m_abs = math.abs
+local v2 = Vector2.new
+local v3 = Vector3.new
+local c3rgb = Color3.fromRGB
+local c3new = Color3.new
+local draw_new = Drawing.new
+local t_insert = table.insert
+local t_sort = table.sort
+local cf_new = CFrame.new
+local pairs, ipairs, tostring, type, typeof, pcall, setnamecallmethod = pairs, ipairs, tostring, type, typeof, pcall, setnamecallmethod
+
+local function setDrawingProp(drawing, prop, value)
+    if drawing[prop] ~= value then
+        drawing[prop] = value
+    end
+end
+
+local FOVCircle = draw_new("Circle")
+setDrawingProp(FOVCircle, "Visible", false)
+setDrawingProp(FOVCircle, "Thickness", 1)
+setDrawingProp(FOVCircle, "NumSides", 32)
+setDrawingProp(FOVCircle, "Filled", false)
+setDrawingProp(FOVCircle, "Transparency", 1)
+setDrawingProp(FOVCircle, "ZIndex", 2)
+
+local FOVFilledCircle = draw_new("Circle")
+setDrawingProp(FOVFilledCircle, "Visible", false)
+setDrawingProp(FOVFilledCircle, "Thickness", 1)
+setDrawingProp(FOVFilledCircle, "NumSides", 32)
+setDrawingProp(FOVFilledCircle, "Filled", true)
+setDrawingProp(FOVFilledCircle, "Transparency", 1)
+setDrawingProp(FOVFilledCircle, "ZIndex", 1)
+
+local TracerLine = draw_new("Line")
+setDrawingProp(TracerLine, "Visible", false)
+setDrawingProp(TracerLine, "Thickness", 1)
+setDrawingProp(TracerLine, "ZIndex", 3)
+
+local R15_BONES = {
+    {"Head", "UpperTorso"},
+    {"UpperTorso", "LowerTorso"},
+    {"UpperTorso", "LeftUpperArm"}, {"LeftUpperArm", "LeftLowerArm"}, {"LeftLowerArm", "LeftHand"},
+    {"UpperTorso", "RightUpperArm"}, {"RightUpperArm", "RightLowerArm"}, {"RightLowerArm", "RightHand"},
+    {"LowerTorso", "LeftUpperLeg"}, {"LeftUpperLeg", "LeftLowerLeg"}, {"LeftLowerLeg", "LeftFoot"},
+    {"LowerTorso", "RightUpperLeg"}, {"RightUpperLeg", "RightLowerLeg"}, {"RightLowerLeg", "RightFoot"}
+}
+
+local R6_BONES = {
+    {"Head", "Torso"},
+    {"Torso", "Left Arm"}, {"Torso", "Right Arm"},
+    {"Torso", "Left Leg"}, {"Torso", "Right Leg"}
+}
+
+local MULTIPOINT_OFFSETS = {
+    v3(0, 0, 0),
+    v3(1, 1, 1), v3(-1, 1, 1), v3(1, -1, 1), v3(-1, -1, 1),
+    v3(1, 1, -1), v3(-1, 1, -1), v3(1, -1, -1), v3(-1, -1, -1),
+    v3(1, 0, 0), v3(-1, 0, 0), v3(0, 1, 0), v3(0, -1, 0)
+}
+
+local ESPCache = {}
+local NPC_ESPCache = {}
+local TargetCache = setmetatable({}, {__mode = "k"})
+local Connections = {}
+local OriginalLighting = {
+    Brightness = Lighting.Brightness,
+    ClockTime = Lighting.ClockTime,
+    FogEnd = Lighting.FogEnd,
+    GlobalShadows = Lighting.GlobalShadows,
+    OutdoorAmbient = Lighting.OutdoorAmbient
+}
+
+local sharedRaycastParams = RaycastParams.new()
+sharedRaycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local lastRaycastCamera = nil
+local lastRaycastCharacter = nil
+
+local function CalculateChance(Percentage)
+    return m_random(1, 100) <= Percentage
+end
+
+local Window = Library:CreateWindow({
+    Title      = 'SCP | Phoenix',
+    Center     = true,
+    AutoShow   = true,
+    TabPadding = 8,
+    MenuFadeTime = 0.2
+})
+
+local Tabs = {
+    Combat = Window:AddTab('Combat'),
+    Visuals = Window:AddTab('Visuals'),
+    Misc = Window:AddTab('Misc'),
+    Settings = Window:AddTab('Settings')
+}
+
+local SilentAimGroup = Tabs.Combat:AddLeftGroupbox('Silent Aim')
+local WeaponGroup = Tabs.Combat:AddLeftGroupbox('Weapon')
+local FOVGroup = Tabs.Combat:AddRightGroupbox('FOV')
+local TracerGroup = Tabs.Combat:AddRightGroupbox('Tracer')
+
+local PlayerESPGroup = Tabs.Visuals:AddLeftGroupbox('Player ESP')
+local WorldGroup = Tabs.Visuals:AddLeftGroupbox('World')
+local NPCESPGroup = Tabs.Visuals:AddRightGroupbox('NPC ESP')
+
+local PlayerGroup = Tabs.Misc:AddLeftGroupbox('Player')
+local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
+
+SilentAimGroup:AddToggle('SilentAimEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('SilentAimKeybind', { Default = 'NONE', SyncToggleState = true, Mode = 'Toggle', Text = 'Silent Aim' })
+SilentAimGroup:AddToggle('MultipointEnabled', { Text = 'Multipoint', Default = false })
+SilentAimGroup:AddToggle('PrioritizeArmed', { Text = 'Prioritize Armed', Default = false })
+SilentAimGroup:AddSlider('Hitchance', { Text = 'Hitchance', Default = 100, Min = 0, Max = 100, Rounding = 0, Compact = false })
+SilentAimGroup:AddDropdown('Hitpart', { Values = { 'Head', 'HumanoidRootPart', 'Random' }, Default = 1, Multi = false, Text = 'Hitpart' })
+SilentAimGroup:AddDropdown('PriorityPart', { Values = { 'Head', 'HumanoidRootPart', 'UpperTorso', 'LowerTorso' }, Default = 1, Multi = false, Text = 'Priority Part' })
+SilentAimGroup:AddSlider('PriorityChance', { Text = 'Priority Chance', Default = 50, Min = 0, Max = 100, Rounding = 0, Compact = false })
+SilentAimGroup:AddToggle('VisibleCheck', { Text = 'Visible Check', Default = false })
+SilentAimGroup:AddToggle('TeamCheck', { Text = 'Team Check', Default = false })
+
+local TeamNames = {}
+for _, team in ipairs(Teams:GetTeams()) do
+    t_insert(TeamNames, team.Name)
+end
+t_sort(TeamNames)
+
+SilentAimGroup:AddDropdown('IgnoredTeams', { Values = TeamNames, Default = {}, Multi = true, Text = 'Ignored Teams' })
+SilentAimGroup:AddToggle('TargetNPCsEnabled', { Text = 'Target NPCs', Default = false })
+SilentAimGroup:AddDropdown('TargetNPCs', { Values = {}, Default = {}, Multi = true, Text = 'Select NPCs' })
+
+local scpFolder = Workspace:FindFirstChild("SCPs")
+local scpHumanoids = scpFolder and scpFolder:FindFirstChild("Humanoids")
+
+SilentAimGroup:AddButton('Refresh NPCs', function()
+    local names = {}
+    if scpHumanoids then
+        for _, v in ipairs(scpHumanoids:GetChildren()) do
+            if v:IsA("Model") and not table.find(names, v.Name) then
+                t_insert(names, v.Name)
+            end
+        end
+    end
+    Options.TargetNPCs:SetValues(names)
+end)
+
+WeaponGroup:AddToggle('DisableCameraShake', { Text = 'Disable Camera Shake', Default = false })
+WeaponGroup:AddToggle('InfiniteAmmo', { Text = 'Infinite Ammo', Default = false })
+WeaponGroup:AddDropdown('AmmoTypeSelect', { Values = {"Pistol", "Rifle", "SMG", "Shotgun"}, Default = {}, Multi = true, Text = 'Select Ammo Type' })
+WeaponGroup:AddToggle('NoSpread', { Text = 'No Spread', Default = false })
+WeaponGroup:AddToggle('NoRecoil', { Text = 'No Recoil', Default = false })
+
+FOVGroup:AddToggle('FOVEnabled', { Text = 'Enable', Default = false })
+local FOVOutlineToggle = FOVGroup:AddToggle('FOVOutline', { Text = 'Outline', Default = false })
+FOVOutlineToggle:AddColorPicker('FOVOutlineColor', { Default = Library.AccentColor })
+local FOVFilledToggle = FOVGroup:AddToggle('FOVFilled', { Text = 'Filled', Default = false })
+FOVFilledToggle:AddColorPicker('FOVFilledColor', { Default = Library.AccentColor })
+FOVGroup:AddSlider('FOVRadius', { Text = 'Radius', Default = 100, Min = 0, Max = 600, Rounding = 0 })
+FOVGroup:AddSlider('FOVThickness', { Text = 'Thickness', Default = 1, Min = 1, Max = 10, Rounding = 0 })
+FOVGroup:AddSlider('FOVNumSides', { Text = 'Num Sides', Default = 32, Min = 10, Max = 60, Rounding = 0 })
+FOVGroup:AddSlider('FOVFilledTransparency', { Text = 'Filled Transparency', Default = 0.5, Min = 0, Max = 1, Rounding = 2 })
+
+TracerGroup:AddToggle('TracerEnabled', { Text = 'Enable', Default = false }):AddColorPicker('TracerColor', { Default = Library.AccentColor })
+TracerGroup:AddSlider('TracerThickness', { Text = 'Thickness', Default = 1, Min = 1, Max = 10, Rounding = 0 })
+
+PlayerESPGroup:AddToggle('ESPEnabled', { Text = 'Enable', Default = false })
+PlayerESPGroup:AddToggle('ESPTeamColor', { Text = 'Use Team Color', Default = false })
+PlayerESPGroup:AddToggle('ESPBox', { Text = 'Box', Default = false }):AddColorPicker('BoxColor', { Default = c3rgb(255, 255, 255) })
+PlayerESPGroup:AddDropdown('ESPBoxType', { Values = { 'Corner', 'Default' }, Default = 2, Multi = false, Text = 'Box Type' })
+PlayerESPGroup:AddToggle('ESPSkeleton', { Text = 'Skeleton', Default = false }):AddColorPicker('SkeletonColor', { Default = c3rgb(0, 255, 120) })
+PlayerESPGroup:AddToggle('ESPName', { Text = 'Name', Default = false }):AddColorPicker('NameColor', { Default = c3rgb(255, 255, 255) })
+PlayerESPGroup:AddToggle('ESPDistance', { Text = 'Distance', Default = false })
+PlayerESPGroup:AddToggle('ESPHealth', { Text = 'Health Bar', Default = false })
+PlayerESPGroup:AddToggle('ESPHealthText', { Text = 'Health Text', Default = false })
+PlayerESPGroup:AddToggle('ESPTool', { Text = 'Equipped Tool', Default = false })
+
+NPCESPGroup:AddToggle('NPCESPEnabled', { Text = 'Enable', Default = false })
+NPCESPGroup:AddToggle('NPCESPBox', { Text = 'Box', Default = false }):AddColorPicker('NPCBoxColor', { Default = c3rgb(255, 100, 100) })
+NPCESPGroup:AddDropdown('NPCESPBoxType', { Values = { 'Corner', 'Default' }, Default = 2, Multi = false, Text = 'Box Type' })
+NPCESPGroup:AddToggle('NPCESPSkeleton', { Text = 'Skeleton', Default = false }):AddColorPicker('NPCSkeletonColor', { Default = c3rgb(255, 50, 50) })
+NPCESPGroup:AddToggle('NPCESPName', { Text = 'Name', Default = false }):AddColorPicker('NPCNameColor', { Default = c3rgb(255, 150, 150) })
+NPCESPGroup:AddToggle('NPCESPDistance', { Text = 'Distance', Default = false })
+NPCESPGroup:AddToggle('NPCESPHealth', { Text = 'Health Bar', Default = false })
+NPCESPGroup:AddToggle('NPCESPHealthText', { Text = 'Health Text', Default = false })
+
+PlayerGroup:AddToggle('InstantInteract', { Text = 'Instant Interact', Default = false })
+PlayerGroup:AddToggle('InfiniteStamina', { Text = 'Infinite Stamina', Default = false })
+PlayerGroup:AddToggle('AutoThirst', { Text = 'Auto Thirst', Default = false })
+PlayerGroup:AddToggle('AutoHunger', { Text = 'Auto Hunger', Default = false })
+
+MenuGroup:AddToggle('WatermarkToggle', { Text = 'Watermark', Default = false }):OnChanged(function()
+    Library:SetWatermarkVisibility(Toggles.WatermarkToggle.Value)
+end)
+
+MenuGroup:AddToggle('KeybindsToggle', { Text = 'Keybinds', Default = false }):OnChanged(function()
+    Library.KeybindFrame.Visible = Toggles.KeybindsToggle.Value
+end)
+
+Library:SetWatermark('SCP Phoenix Client')
+Library:SetWatermarkVisibility(false)
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+ThemeManager:SetFolder('SilentAimConfig')
+SaveManager:SetFolder('SilentAimConfig')
+SaveManager:IgnoreThemeSettings()
+ThemeManager:ApplyToTab(Tabs.Settings)
+SaveManager:BuildConfigSection(Tabs.Settings)
+
+Options.AccentColor:OnChanged(function()
+    Options.FOVOutlineColor:SetValueRGB(Options.AccentColor.Value)
+    Options.FOVFilledColor:SetValueRGB(Options.AccentColor.Value)
+    Options.TracerColor:SetValueRGB(Options.AccentColor.Value)
+end)
+
+local function hideVisuals(data)
+    for i = 1, 14 do setDrawingProp(data.Skeleton[i], "Visible", false) end
+    for i = 1, 8 do setDrawingProp(data.CornerBox[i], "Visible", false) end
+    setDrawingProp(data.Box, "Visible", false)
+    setDrawingProp(data.HealthBarBg, "Visible", false)
+    setDrawingProp(data.HealthBar, "Visible", false)
+    setDrawingProp(data.NameTag, "Visible", false)
+    setDrawingProp(data.DistanceTag, "Visible", false)
+    setDrawingProp(data.HealthTextTag, "Visible", false)
+    setDrawingProp(data.ToolTag, "Visible", false)
+end
+
+local function validateCache(entity, data, isNPC)
+    local character = isNPC and entity or entity.Character
+    if not character then
+        data.CachedParts = nil
+        return nil
+    end
+
+    if data.CachedParts and data.CachedParts.Character == character and data.CachedParts.HRP and data.CachedParts.HRP.Parent and data.CachedParts.Humanoid and data.CachedParts.Humanoid.Parent then
+        return data.CachedParts
+    end
+
+    local hrp = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart or character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
+    local humanoid = character:FindFirstChild("Humanoid") or character:FindFirstChildOfClass("Humanoid")
+
+    if not hrp or not humanoid then
+        data.CachedParts = nil
+        return nil
+    end
+
+    local isR15 = character:FindFirstChild("UpperTorso") ~= nil
+    local currentBones = isR15 and R15_BONES or R6_BONES
+    local boneParts = {}
+
+    for i, bonePair in ipairs(currentBones) do
+        boneParts[i] = {
+            character:FindFirstChild(bonePair[1]),
+            character:FindFirstChild(bonePair[2])
+        }
+    end
+
+    data.CachedParts = {
+        HRP = hrp,
+        Humanoid = humanoid,
+        BoneParts = boneParts,
+        Character = character
+    }
+
+    return data.CachedParts
+end
+
+local function createESPData(cacheTable, key)
+    if cacheTable[key] then return end
+
+    local data = {
+        Skeleton = {},
+        CornerBox = {},
+        Box = draw_new("Square"),
+        HealthBarBg = draw_new("Square"),
+        HealthBar = draw_new("Square"),
+        NameTag = draw_new("Text"),
+        DistanceTag = draw_new("Text"),
+        HealthTextTag = draw_new("Text"),
+        ToolTag = draw_new("Text"),
+        CachedParts = nil,
+        Connections = {}
+    }
+
+    setDrawingProp(data.Box, "Thickness", 1.5)
+    setDrawingProp(data.Box, "Filled", false)
+    setDrawingProp(data.Box, "Visible", false)
+
+    setDrawingProp(data.HealthBarBg, "Color", c3rgb(40, 40, 40))
+    setDrawingProp(data.HealthBarBg, "Filled", true)
+    setDrawingProp(data.HealthBarBg, "Thickness", 0)
+    setDrawingProp(data.HealthBarBg, "Visible", false)
+
+    setDrawingProp(data.HealthBar, "Filled", true)
+    setDrawingProp(data.HealthBar, "Thickness", 0)
+    setDrawingProp(data.HealthBar, "Visible", false)
+
+    setDrawingProp(data.NameTag, "Size", 13)
+    setDrawingProp(data.NameTag, "Center", true)
+    setDrawingProp(data.NameTag, "Outline", true)
+    setDrawingProp(data.NameTag, "Visible", false)
+
+    setDrawingProp(data.DistanceTag, "Size", 13)
+    setDrawingProp(data.DistanceTag, "Center", true)
+    setDrawingProp(data.DistanceTag, "Outline", true)
+    setDrawingProp(data.DistanceTag, "Visible", false)
+    
+    setDrawingProp(data.HealthTextTag, "Size", 13)
+    setDrawingProp(data.HealthTextTag, "Center", true)
+    setDrawingProp(data.HealthTextTag, "Outline", true)
+    setDrawingProp(data.HealthTextTag, "Visible", false)
+    
+    setDrawingProp(data.ToolTag, "Size", 13)
+    setDrawingProp(data.ToolTag, "Center", true)
+    setDrawingProp(data.ToolTag, "Outline", true)
+    setDrawingProp(data.ToolTag, "Visible", false)
+
+    for i = 1, 14 do
+        local line = draw_new("Line")
+        setDrawingProp(line, "Thickness", 1.5)
+        setDrawingProp(line, "Visible", false)
+        t_insert(data.Skeleton, line)
+    end
+    
+    for i = 1, 8 do
+        local line = draw_new("Line")
+        setDrawingProp(line, "Thickness", 1.5)
+        setDrawingProp(line, "Visible", false)
+        t_insert(data.CornerBox, line)
+    end
+
+    cacheTable[key] = data
+end
+
+local function removeESPData(cacheTable, key)
+    if cacheTable[key] then
+        local data = cacheTable[key]
+        for _, conn in ipairs(data.Connections) do
+            conn:Disconnect()
+        end
+        for i = 1, 14 do data.Skeleton[i]:Remove() end
+        for i = 1, 8 do data.CornerBox[i]:Remove() end
+        data.Box:Remove()
+        data.HealthBarBg:Remove()
+        data.HealthBar:Remove()
+        data.NameTag:Remove()
+        data.DistanceTag:Remove()
+        data.HealthTextTag:Remove()
+        data.ToolTag:Remove()
+        cacheTable[key] = nil
+    end
+end
+
+for _, player in ipairs(Players:GetPlayers()) do
+    if player ~= LocalPlayer then createESPData(ESPCache, player) end
+end
+
+t_insert(Connections, Players.PlayerAdded:Connect(function(player)
+    if player ~= LocalPlayer then createESPData(ESPCache, player) end
+end))
+
+t_insert(Connections, Players.PlayerRemoving:Connect(function(player)
+    removeESPData(ESPCache, player)
+end))
+
+if scpHumanoids then
+    for _, npc in ipairs(scpHumanoids:GetChildren()) do
+        if npc:IsA("Model") then createESPData(NPC_ESPCache, npc) end
+    end
+    t_insert(Connections, scpHumanoids.ChildAdded:Connect(function(child)
+        if child:IsA("Model") then createESPData(NPC_ESPCache, child) end
+    end))
+    t_insert(Connections, scpHumanoids.ChildRemoved:Connect(function(child)
+        removeESPData(NPC_ESPCache, child)
+    end))
+end
+
+local function isHoldingPrioritizedWeapon(character)
+    local tool = character:FindFirstChildOfClass("Tool")
+    if not tool then return false end
+    
+    local weaponShopAssets = ReplicatedStorage:FindFirstChild("WeaponShopAssets")
+    if not weaponShopAssets then return false end
+    
+    local folders = {"Pistol", "Rifle", "SMG", "Shotgun"}
+    for _, folderName in ipairs(folders) do
+        local folder = weaponShopAssets:FindFirstChild(folderName)
+        if folder and folder:FindFirstChild(tool.Name) then
+            return true
+        end
+    end
+    
+    return false
+end
+
+local function getClosestCharacterToMouse(mousePos, currentCamera)
+    if not currentCamera then return nil, nil, nil end
+
+    local fovEnabled = Toggles and Toggles.FOVEnabled and Toggles.FOVEnabled.Value
+    local fovRadiusSq = Options and Options.FOVRadius and (Options.FOVRadius.Value * Options.FOVRadius.Value) or 10000
+    local visibleCheck = Toggles and Toggles.VisibleCheck and Toggles.VisibleCheck.Value
+    local teamCheck = Toggles and Toggles.TeamCheck and Toggles.TeamCheck.Value
+    local ignoredTeams = Options and Options.IgnoredTeams and Options.IgnoredTeams.Value or {}
+    
+    local localChar = LocalPlayer.Character
+    if lastRaycastCamera ~= currentCamera or lastRaycastCharacter ~= localChar then
+        lastRaycastCamera = currentCamera
+        lastRaycastCharacter = localChar
+        local filter = {currentCamera}
+        if localChar then
+            t_insert(filter, localChar)
+        end
+        sharedRaycastParams.FilterDescendantsInstances = filter
+    end
+    
+    local camCFramePos = currentCamera.CFrame.Position
+    local potentialTargets = {}
+    local entities = {}
+
+    for player, data in pairs(ESPCache) do
+        local cached = validateCache(player, data, false)
+        if cached and cached.Humanoid and cached.Humanoid.Health > 0 then
+            if teamCheck and player.Team and ignoredTeams[player.Team.Name] then continue end
+            t_insert(entities, {
+                character = cached.Character,
+                head = cached.Character:FindFirstChild("Head"),
+                hrp = cached.HRP
+            })
+        end
+    end
+
+    local targetNPCsToggle = Toggles and Toggles.TargetNPCsEnabled and Toggles.TargetNPCsEnabled.Value
+    local targetNPCs = Options and Options.TargetNPCs and Options.TargetNPCs.Value or {}
+
+    if targetNPCsToggle then
+        for npc, data in pairs(NPC_ESPCache) do
+            if targetNPCs[npc.Name] then
+                local cached = validateCache(npc, data, true)
+                if cached and cached.Humanoid and cached.Humanoid.Health > 0 then
+                    t_insert(entities, {
+                        character = cached.Character,
+                        head = cached.Character:FindFirstChild("Head"),
+                        hrp = cached.HRP
+                    })
+                end
+            end
+        end
+    end
+
+    for i = 1, #entities do
+        local entity = entities[i]
+        local targetPartName = Options and Options.Hitpart and Options.Hitpart.Value or "HumanoidRootPart"
+        local targetPart
+        local now = os.clock()
+        
+        if not TargetCache[entity.character] then
+            TargetCache[entity.character] = { part = nil, lastUpdate = 0 }
+        end
+        
+        local cache = TargetCache[entity.character]
+        
+        if now - cache.lastUpdate >= 0.5 or not cache.part or not cache.part.Parent then
+            if targetPartName == 'Random' then
+                local priorityPartName = Options and Options.PriorityPart and Options.PriorityPart.Value or "Head"
+                local priorityChance = Options and Options.PriorityChance and Options.PriorityChance.Value or 0
+                local priorityPart = entity.character:FindFirstChild(priorityPartName)
+                
+                if priorityPart and m_random(1, 100) <= priorityChance then
+                    cache.part = priorityPart
+                else
+                    local parts = {}
+                    for _, v in ipairs(entity.character:GetChildren()) do
+                        if v:IsA("BasePart") and v.Name ~= "HumanoidRootPart" and v.Name ~= priorityPartName then
+                            t_insert(parts, v)
+                        end
+                    end
+                    if #parts > 0 then
+                        cache.part = parts[m_random(1, #parts)]
+                    elseif priorityPart then
+                        cache.part = priorityPart
+                    else
+                        cache.part = entity.hrp
+                    end
+                end
+            else
+                cache.part = targetPartName == 'Head' and entity.head or entity.hrp
+            end
+            
+            cache.lastUpdate = now
+        end
+        
+        targetPart = cache.part
+        if not targetPart then continue end
+        
+        if Toggles and Toggles.MultipointEnabled and Toggles.MultipointEnabled.Value then
+            local size = targetPart.Size * 0.8
+            local cf = targetPart.CFrame
+            local hx, hy, hz = size.X / 2, size.Y / 2, size.Z / 2
+            
+            local bestVisibleOffset = nil
+            local bestVisibleDist = m_huge
+            local bestInvisibleOffset = nil
+            local bestInvisibleDist = m_huge
+            
+            for _, offset in ipairs(MULTIPOINT_OFFSETS) do
+                local point = (cf * cf_new(hx * offset.X, hy * offset.Y, hz * offset.Z)).Position
+                local screenPos, onScreen = currentCamera:WorldToViewportPoint(point)
+                
+                if onScreen then
+                    local charPos2D = v2(screenPos.X, screenPos.Y)
+                    local distSq = (charPos2D.X - mousePos.X) * (charPos2D.X - mousePos.X) + (charPos2D.Y - mousePos.Y) * (charPos2D.Y - mousePos.Y)
+                    
+                    if not fovEnabled or distSq <= fovRadiusSq then
+                        local isVisible = true
+                        local raycastResult = Workspace:Raycast(camCFramePos, point - camCFramePos, sharedRaycastParams)
+                        if raycastResult and raycastResult.Instance and not raycastResult.Instance:IsDescendantOf(entity.character) then
+                            isVisible = false
+                        end
+                        
+                        if isVisible then
+                            if distSq < bestVisibleDist then
+                                bestVisibleDist = distSq
+                                bestVisibleOffset = offset
+                            end
+                        else
+                            if distSq < bestInvisibleDist then
+                                bestInvisibleDist = distSq
+                                bestInvisibleOffset = offset
+                            end
+                        end
+                    end
+                end
+            end
+            
+            local finalOffset = bestVisibleOffset or bestInvisibleOffset
+            if finalOffset then
+                local distSq = bestVisibleOffset and bestVisibleDist or bestInvisibleDist
+                local point = (cf * cf_new(hx * finalOffset.X, hy * finalOffset.Y, hz * finalOffset.Z)).Position
+                local screenPos = currentCamera:WorldToViewportPoint(point)
+                local charPos2D = v2(screenPos.X, screenPos.Y)
+                
+                t_insert(potentialTargets, {
+                    distanceSq = distSq,
+                    pos2D = charPos2D,
+                    part = targetPart,
+                    hitPos = point,
+                    character = entity.character,
+                    hasPriority = isHoldingPrioritizedWeapon(entity.character),
+                    isVisible = bestVisibleOffset ~= nil
+                })
+            end
+        else
+            local point = targetPart.Position
+            local screenPos, onScreen = currentCamera:WorldToViewportPoint(point)
+            
+            if onScreen then
+                local charPos2D = v2(screenPos.X, screenPos.Y)
+                local distSq = (charPos2D.X - mousePos.X) * (charPos2D.X - mousePos.X) + (charPos2D.Y - mousePos.Y) * (charPos2D.Y - mousePos.Y)
+                
+                if not fovEnabled or distSq <= fovRadiusSq then
+                    local isVisible = true
+                    local raycastResult = Workspace:Raycast(camCFramePos, point - camCFramePos, sharedRaycastParams)
+                    if raycastResult and raycastResult.Instance and not raycastResult.Instance:IsDescendantOf(entity.character) then
+                        isVisible = false
+                    end
+
+                    t_insert(potentialTargets, {
+                        distanceSq = distSq,
+                        pos2D = charPos2D,
+                        part = targetPart,
+                        hitPos = point,
+                        character = entity.character,
+                        hasPriority = isHoldingPrioritizedWeapon(entity.character),
+                        isVisible = isVisible
+                    })
+                end
+            end
+        end
+    end
+
+    t_sort(potentialTargets, function(a, b)
+        if a.isVisible and not b.isVisible then return true end
+        if not a.isVisible and b.isVisible then return false end
+
+        if Toggles and Toggles.PrioritizeArmed and Toggles.PrioritizeArmed.Value then
+            if a.hasPriority and not b.hasPriority then return true end
+            if not a.hasPriority and b.hasPriority then return false end
+        end
+        return a.distanceSq < b.distanceSq
+    end)
+
+    for i = 1, #potentialTargets do
+        local target = potentialTargets[i]
+        
+        if visibleCheck and not target.isVisible then
+            continue
+        end
+        
+        return target.pos2D, target.part, target.hitPos
+    end
+    
+    return nil, nil, nil
+end
+
+local fullbrightConnection
+local function updateFullbright()
+    if Toggles and Toggles.Fullbright and Toggles.Fullbright.Value then
+        Lighting.Brightness = 2
+        Lighting.ClockTime = 14
+        Lighting.FogEnd = 100000
+        Lighting.GlobalShadows = false
+        Lighting.OutdoorAmbient = c3rgb(128, 128, 128)
+    end
+end
+
+WorldGroup:AddToggle('Fullbright', { Text = 'Fullbright', Default = false }):OnChanged(function()
+    if Toggles and Toggles.Fullbright and Toggles.Fullbright.Value then
+        OriginalLighting.Brightness = Lighting.Brightness
+        OriginalLighting.ClockTime = Lighting.ClockTime
+        OriginalLighting.FogEnd = Lighting.FogEnd
+        OriginalLighting.GlobalShadows = Lighting.GlobalShadows
+        OriginalLighting.OutdoorAmbient = Lighting.OutdoorAmbient
+        
+        updateFullbright()
+        fullbrightConnection = Lighting.Changed:Connect(updateFullbright)
+    else
+        if fullbrightConnection then
+            fullbrightConnection:Disconnect()
+            fullbrightConnection = nil
+        end
+        if OriginalLighting.Brightness then
+            Lighting.Brightness = OriginalLighting.Brightness
+            Lighting.ClockTime = OriginalLighting.ClockTime
+            Lighting.FogEnd = OriginalLighting.FogEnd
+            Lighting.GlobalShadows = OriginalLighting.GlobalShadows
+            Lighting.OutdoorAmbient = OriginalLighting.OutdoorAmbient
+        end
+    end
+end)
+
+WorldGroup:AddToggle('DisableVisualEffects', { Text = 'Disable Visual Effects', Default = false })
+
+local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
+    local tggls = Toggles
+    local opts = Options
+    if not (tggls and opts) then return end
+
+    local espEnabled = isNPC and tggls.NPCESPEnabled.Value or (not isNPC and tggls.ESPEnabled.Value)
+    
+    if not espEnabled then
+        for _, data in pairs(cacheTable) do hideVisuals(data) end
+        return
+    end
+
+    local teamColorEnabled = not isNPC and tggls.ESPTeamColor.Value
+    local boxEnabled = isNPC and tggls.NPCESPBox.Value or (not isNPC and tggls.ESPBox.Value)
+    local skeletonEnabled = isNPC and tggls.NPCESPSkeleton.Value or (not isNPC and tggls.ESPSkeleton.Value)
+    local nameEnabled = isNPC and tggls.NPCESPName.Value or (not isNPC and tggls.ESPName.Value)
+    local distanceEnabled = isNPC and tggls.NPCESPDistance.Value or (not isNPC and tggls.ESPDistance.Value)
+    local healthEnabled = isNPC and tggls.NPCESPHealth.Value or (not isNPC and tggls.ESPHealth.Value)
+    local toolEnabled = not isNPC and tggls.ESPTool.Value
+    local healthTextEnabled = isNPC and tggls.NPCESPHealthText.Value or (not isNPC and tggls.ESPHealthText.Value)
+    
+    local boxColorVal = isNPC and opts.NPCBoxColor.Value or opts.BoxColor.Value
+    local nameColorVal = isNPC and opts.NPCNameColor.Value or opts.NameColor.Value
+    local skelColorVal = isNPC and opts.NPCSkeletonColor.Value or opts.SkeletonColor.Value
+    local boxTypeVal = isNPC and opts.NPCESPBoxType.Value or opts.ESPBoxType.Value
+    
+    local needsBox = boxEnabled or nameEnabled or distanceEnabled or healthEnabled or toolEnabled or healthTextEnabled
+
+    for entity, data in pairs(cacheTable) do
+        local cached = validateCache(entity, data, isNPC)
+        if cached and cached.Humanoid.Health > 0 then
+            local hrp = cached.HRP
+            local humanoid = cached.Humanoid
+            local character = cached.Character
+
+            local hasTeamColor = false
+            local espColor = c3new(1, 1, 1)
+            if teamColorEnabled and entity.Team then
+                espColor = entity.TeamColor.Color
+                hasTeamColor = true
+            end
+
+            local currentBoxColor = hasTeamColor and espColor or boxColorVal
+            local currentNameColor = hasTeamColor and espColor or nameColorVal
+            local currentSkeletonColor = hasTeamColor and espColor or skelColorVal
+
+            local topPos, bottomPos, onScreenTop, onScreenBottom
+            local isBoxVisible = false
+
+            if needsBox then
+                topPos, onScreenTop = currentCamera:WorldToViewportPoint(hrp.Position + v3(0, 3.3, 0))
+                bottomPos, onScreenBottom = currentCamera:WorldToViewportPoint(hrp.Position - v3(0, 4.2, 0))
+                isBoxVisible = onScreenTop or onScreenBottom
+            end
+
+            if isBoxVisible then
+                local boxHeight = m_abs(topPos.Y - bottomPos.Y)
+                local boxWidth = boxHeight / 1.6
+                local boxX = topPos.X - (boxWidth / 2)
+                local boxY = topPos.Y
+
+                if boxEnabled then
+                    if boxTypeVal == 'Corner' then
+                        setDrawingProp(data.Box, "Visible", false)
+                        local lineW = boxWidth / 3
+                        local lineH = boxHeight / 4
+                        
+                        data.CornerBox[1].From = v2(boxX, boxY)
+                        data.CornerBox[1].To = v2(boxX + lineW, boxY)
+                        data.CornerBox[2].From = v2(boxX, boxY)
+                        data.CornerBox[2].To = v2(boxX, boxY + lineH)
+                        
+                        data.CornerBox[3].From = v2(boxX + boxWidth, boxY)
+                        data.CornerBox[3].To = v2(boxX + boxWidth - lineW, boxY)
+                        data.CornerBox[4].From = v2(boxX + boxWidth, boxY)
+                        data.CornerBox[4].To = v2(boxX + boxWidth, boxY + lineH)
+                        
+                        data.CornerBox[5].From = v2(boxX, boxY + boxHeight)
+                        data.CornerBox[5].To = v2(boxX + lineW, boxY + boxHeight)
+                        data.CornerBox[6].From = v2(boxX, boxY + boxHeight)
+                        data.CornerBox[6].To = v2(boxX, boxY + boxHeight - lineH)
+                        
+                        data.CornerBox[7].From = v2(boxX + boxWidth, boxY + boxHeight)
+                        data.CornerBox[7].To = v2(boxX + boxWidth - lineW, boxY + boxHeight)
+                        data.CornerBox[8].From = v2(boxX + boxWidth, boxY + boxHeight)
+                        data.CornerBox[8].To = v2(boxX + boxWidth, boxY + boxHeight - lineH)
+                        
+                        for i = 1, 8 do
+                            setDrawingProp(data.CornerBox[i], "Color", currentBoxColor)
+                            setDrawingProp(data.CornerBox[i], "Visible", true)
+                        end
+                    else
+                        for i = 1, 8 do setDrawingProp(data.CornerBox[i], "Visible", false) end
+                        setDrawingProp(data.Box, "Position", v2(boxX, boxY))
+                        setDrawingProp(data.Box, "Size", v2(boxWidth, boxHeight))
+                        setDrawingProp(data.Box, "Color", currentBoxColor)
+                        setDrawingProp(data.Box, "Visible", true)
+                    end
+                else
+                    setDrawingProp(data.Box, "Visible", false)
+                    for i = 1, 8 do setDrawingProp(data.CornerBox[i], "Visible", false) end
+                end
+
+                if nameEnabled then
+                    setDrawingProp(data.NameTag, "Text", character.Name)
+                    setDrawingProp(data.NameTag, "Position", v2(topPos.X, boxY - 16))
+                    setDrawingProp(data.NameTag, "Color", currentNameColor)
+                    setDrawingProp(data.NameTag, "Visible", true)
+                else
+                    setDrawingProp(data.NameTag, "Visible", false)
+                end
+
+                local yOffset = bottomPos.Y + 2
+                
+                if distanceEnabled then
+                    local distance = m_floor((camPos - hrp.Position).Magnitude)
+                    setDrawingProp(data.DistanceTag, "Text", tostring(distance) .. "m")
+                    setDrawingProp(data.DistanceTag, "Position", v2(topPos.X, yOffset))
+                    setDrawingProp(data.DistanceTag, "Color", currentNameColor)
+                    setDrawingProp(data.DistanceTag, "Visible", true)
+                    yOffset = yOffset + 14
+                else
+                    setDrawingProp(data.DistanceTag, "Visible", false)
+                end
+                
+                if toolEnabled then
+                    local tool = character:FindFirstChildOfClass("Tool")
+                    setDrawingProp(data.ToolTag, "Text", tool and tool.Name or "None")
+                    setDrawingProp(data.ToolTag, "Position", v2(topPos.X, yOffset))
+                    setDrawingProp(data.ToolTag, "Color", currentNameColor)
+                    setDrawingProp(data.ToolTag, "Visible", true)
+                else
+                    setDrawingProp(data.ToolTag, "Visible", false)
+                end
+
+                local healthPercent = m_clamp(humanoid.Health / (humanoid.MaxHealth > 0 and humanoid.MaxHealth or 100), 0, 1)
+                local barWidth = 3
+                local barOffset = 5
+                local barX = boxX - barOffset - barWidth
+                local healthHeight = boxHeight * healthPercent
+                local healthColor = c3rgb(255, 0, 0):Lerp(c3rgb(0, 255, 0), healthPercent)
+
+                if healthEnabled then
+                    setDrawingProp(data.HealthBarBg, "Position", v2(barX, boxY))
+                    setDrawingProp(data.HealthBarBg, "Size", v2(barWidth, boxHeight))
+                    setDrawingProp(data.HealthBarBg, "Visible", true)
+
+                    setDrawingProp(data.HealthBar, "Position", v2(barX, boxY + (boxHeight - healthHeight)))
+                    setDrawingProp(data.HealthBar, "Size", v2(barWidth, healthHeight))
+                    setDrawingProp(data.HealthBar, "Color", healthColor)
+                    setDrawingProp(data.HealthBar, "Visible", true)
+                else
+                    setDrawingProp(data.HealthBarBg, "Visible", false)
+                    setDrawingProp(data.HealthBar, "Visible", false)
+                end
+                
+                if healthTextEnabled then
+                    setDrawingProp(data.HealthTextTag, "Text", tostring(m_floor(humanoid.Health)) .. " HP")
+                    setDrawingProp(data.HealthTextTag, "Position", v2(barX - 18, boxY + (boxHeight - healthHeight) - 6))
+                    setDrawingProp(data.HealthTextTag, "Color", healthColor)
+                    setDrawingProp(data.HealthTextTag, "Visible", true)
+                else
+                    setDrawingProp(data.HealthTextTag, "Visible", false)
+                end
+            else
+                setDrawingProp(data.Box, "Visible", false)
+                for i = 1, 8 do setDrawingProp(data.CornerBox[i], "Visible", false) end
+                setDrawingProp(data.HealthBarBg, "Visible", false)
+                setDrawingProp(data.HealthBar, "Visible", false)
+                setDrawingProp(data.NameTag, "Visible", false)
+                setDrawingProp(data.DistanceTag, "Visible", false)
+                setDrawingProp(data.HealthTextTag, "Visible", false)
+                setDrawingProp(data.ToolTag, "Visible", false)
+            end
+
+            if skeletonEnabled then
+                local currentBones = cached.BoneParts
+                for i, line in ipairs(data.Skeleton) do
+                    local parts = currentBones[i]
+                    if parts then
+                        local partA, partB = parts[1], parts[2]
+                        if partA and partB and partA.Parent and partB.Parent then
+                            local posA, onScreenA = currentCamera:WorldToViewportPoint(partA.Position)
+                            local posB, onScreenB = currentCamera:WorldToViewportPoint(partB.Position)
+
+                            if onScreenA and onScreenB then
+                                line.From = v2(posA.X, posA.Y)
+                                line.To = v2(posB.X, posB.Y)
+                                setDrawingProp(line, "Color", currentSkeletonColor)
+                                setDrawingProp(line, "Visible", true)
+                            else
+                                setDrawingProp(line, "Visible", false)
+                            end
+                        else
+                            setDrawingProp(line, "Visible", false)
+                        end
+                    else
+                        setDrawingProp(line, "Visible", false)
+                    end
+                end
+            else
+                for i = 1, 14 do setDrawingProp(data.Skeleton[i], "Visible", false) end
+            end
+        else
+            hideVisuals(data)
+        end
+    end
+end
+
+t_insert(Connections, RunService.RenderStepped:Connect(function()
+    local currentCamera = Workspace.CurrentCamera
+    if not currentCamera then return end
+    
+    local mousePos = UserInputService:GetMouseLocation()
+    local tggls = Toggles
+    local opts = Options
+
+    if not (tggls and opts) then return end
+
+    if tggls.DisableVisualEffects and tggls.DisableVisualEffects.Value then
+        local visualEffects = {"PainBlur", "InsanityDOF", "FearCorrection", "InsanityCorrection", "PainCorrection", "PainSootheCorrection", "SCPInfectedVision"}
+        for _, effectName in ipairs(visualEffects) do
+            local effect = Lighting:FindFirstChild(effectName)
+            if effect and effect.Enabled then
+                effect.Enabled = false
+            end
+        end
+    end
+
+    local fovEnabled = tggls.FOVEnabled.Value
+    local tracerEnabled = tggls.TracerEnabled.Value
+    
+    if fovEnabled then
+        local outlineEnabled = tggls.FOVOutline.Value
+        local filledEnabled = tggls.FOVFilled.Value
+        local fovRadius = opts.FOVRadius.Value
+        local fovNumSides = opts.FOVNumSides.Value
+
+        setDrawingProp(FOVCircle, "Visible", outlineEnabled)
+        setDrawingProp(FOVFilledCircle, "Visible", filledEnabled)
+
+        if outlineEnabled then
+            setDrawingProp(FOVCircle, "Position", mousePos)
+            setDrawingProp(FOVCircle, "Radius", fovRadius)
+            setDrawingProp(FOVCircle, "Thickness", opts.FOVThickness.Value)
+            setDrawingProp(FOVCircle, "NumSides", fovNumSides)
+            setDrawingProp(FOVCircle, "Color", opts.FOVOutlineColor.Value)
+        end
+
+        if filledEnabled then
+            setDrawingProp(FOVFilledCircle, "Position", mousePos)
+            setDrawingProp(FOVFilledCircle, "Radius", fovRadius)
+            setDrawingProp(FOVFilledCircle, "NumSides", fovNumSides)
+            setDrawingProp(FOVFilledCircle, "Color", opts.FOVFilledColor.Value)
+            setDrawingProp(FOVFilledCircle, "Transparency", opts.FOVFilledTransparency.Value)
+        end
+    else
+        setDrawingProp(FOVCircle, "Visible", false)
+        setDrawingProp(FOVFilledCircle, "Visible", false)
+    end
+
+    if tracerEnabled then
+        local targetPos = getClosestCharacterToMouse(mousePos, currentCamera)
+        if targetPos then
+            setDrawingProp(TracerLine, "Visible", true)
+            setDrawingProp(TracerLine, "From", mousePos)
+            setDrawingProp(TracerLine, "To", targetPos)
+            setDrawingProp(TracerLine, "Color", opts.TracerColor.Value)
+            setDrawingProp(TracerLine, "Thickness", opts.TracerThickness.Value)
+        else
+            setDrawingProp(TracerLine, "Visible", false)
+        end
+    else
+        setDrawingProp(TracerLine, "Visible", false)
+    end
+
+    local camPos = currentCamera.CFrame.Position
+    updateVisualsForCache(ESPCache, currentCamera, camPos, false)
+    updateVisualsForCache(NPC_ESPCache, currentCamera, camPos, true)
+end))
+
+local oldNamecall
+oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(...)
+    local args = {...}
+    local self = args[1]
+
+    if Library and Library.Unloaded then
+        return oldNamecall(...)
+    end
+
+    local Method = getnamecallmethod()
+    local tggls = Toggles
+    local opts = Options
+
+    if not checkcaller() and tggls then
+        if Method == "GetAttribute" then
+            if args[2] == "BulletSpread" and tggls.NoSpread.Value then
+                return 0
+            end
+            if args[2] == "Recoil" and tggls.NoRecoil.Value then
+                return 0
+            end
+        elseif Method == "FireServer" and tggls.SilentAimEnabled.Value then
+            if typeof(self) == "Instance" and self.Name == "GunEvent" and args[2] == "FireShot" and type(args[3]) == "table" then
+                if opts and opts.Hitchance and CalculateChance(opts.Hitchance.Value) then
+                    local currentCamera = Workspace.CurrentCamera
+                    local mousePos = UserInputService:GetMouseLocation()
+                    local _, HitPart, HitPos = getClosestCharacterToMouse(mousePos, currentCamera)
+                    
+                    if HitPart and HitPos then
+                        args[3].HitPart = HitPart
+                        args[3].HitPos = HitPos
+                        
+                        if setnamecallmethod then setnamecallmethod(Method) end
+                        return oldNamecall(table.unpack(args))
+                    end
+                    
+                    if setnamecallmethod then setnamecallmethod(Method) end
+                end
+            end
+        end
+    end
+    
+    return oldNamecall(...)
+end))
+
+task.spawn(function()
+    local success, CameraShaker = pcall(require, ReplicatedStorage:WaitForChild("ClientModules", 5):WaitForChild("CameraShaker", 5))
+    if not success or not CameraShaker then return end
+    
+    local oldUpdate
+    oldUpdate = hookfunction(CameraShaker.Update, function(self, ...)
+        if Library and Library.Unloaded then
+            return oldUpdate(self, ...)
+        end
+        if Toggles and Toggles.DisableCameraShake and Toggles.DisableCameraShake.Value then
+            return cf_new()
+        end
+        return oldUpdate(self, ...)
+    end)
+end)
+
+task.spawn(function()
+    local Interactables = ReplicatedStorage:WaitForChild("Interactables", 5)
+    
+    local function modifyInteractables()
+        if not Interactables then return end
+        for _, module in ipairs(Interactables:GetDescendants()) do
+            if module:IsA("ModuleScript") then
+                task.spawn(function()
+                    local success, result = pcall(require, module)
+                    if success and type(result) == "table" and result.HoldDuration then
+                        if Toggles and Toggles.InstantInteract and Toggles.InstantInteract.Value then
+                            if not result.OriginalHoldDuration then
+                                result.OriginalHoldDuration = result.HoldDuration
+                            end
+                            result.HoldDuration = 0
+                        else
+                            if result.OriginalHoldDuration then
+                                result.HoldDuration = result.OriginalHoldDuration
+                            end
+                        end
+                    end
+                end)
+            end
+        end
+    end
+
+    if Toggles and Toggles.InstantInteract then
+        Toggles.InstantInteract:OnChanged(modifyInteractables)
+    end
+
+    if Interactables then
+        t_insert(Connections, Interactables.DescendantAdded:Connect(function(descendant)
+            if descendant:IsA("ModuleScript") and Toggles and Toggles.InstantInteract and Toggles.InstantInteract.Value then
+                task.wait(0.5)
+                local success, result = pcall(require, descendant)
+                if success and type(result) == "table" and result.HoldDuration then
+                    if not result.OriginalHoldDuration then
+                        result.OriginalHoldDuration = result.HoldDuration
+                    end
+                    result.HoldDuration = 0
+                end
+            end
+        end))
+    end
+end)
+
+local function setupStamina(character)
+    task.spawn(function()
+        local animate = character:WaitForChild("Animate", 5)
+        if not animate then return end
+        local staminaValue = animate:WaitForChild("Stamina", 5)
+        if not staminaValue then return end
+        
+        local function syncStamina()
+            if Toggles and Toggles.InfiniteStamina and Toggles.InfiniteStamina.Value then
+                local maxStamina = staminaValue:GetAttribute("MaxStamina")
+                if maxStamina and staminaValue.Value ~= maxStamina then
+                    staminaValue.Value = maxStamina
+                end
+            end
+        end
+        
+        syncStamina()
+        t_insert(Connections, staminaValue:GetAttributeChangedSignal("MaxStamina"):Connect(syncStamina))
+        t_insert(Connections, staminaValue:GetPropertyChangedSignal("Value"):Connect(syncStamina))
+    end)
+end
+
+if LocalPlayer.Character then
+    setupStamina(LocalPlayer.Character)
+end
+t_insert(Connections, LocalPlayer.CharacterAdded:Connect(setupStamina))
+
+task.spawn(function()
+    local playerConfig = LocalPlayer:WaitForChild("PlayerConfig", 5)
+    if not playerConfig then return end
+    local ammoFolder = playerConfig:WaitForChild("Ammo", 5)
+    if not ammoFolder then return end
+    local ammoTypes = {"Shotgun", "Pistol", "Rifle", "SMG"}
+
+    local function setupAmmoLock(ammoValue)
+        local function syncAmmo()
+            if Toggles and Toggles.InfiniteAmmo and Toggles.InfiniteAmmo.Value and Options and Options.AmmoTypeSelect and Options.AmmoTypeSelect.Value[ammoValue.Name] then
+                local maxAmmo = ammoValue:GetAttribute("MaxAmmo")
+                if maxAmmo and ammoValue.Value ~= maxAmmo then
+                    ammoValue.Value = maxAmmo
+                end
+            end
+        end
+        syncAmmo()
+        t_insert(Connections, ammoValue:GetAttributeChangedSignal("MaxAmmo"):Connect(syncAmmo))
+        t_insert(Connections, ammoValue:GetPropertyChangedSignal("Value"):Connect(syncAmmo))
+    end
+
+    for _, ammoName in ipairs(ammoTypes) do
+        local ammoValue = ammoFolder:WaitForChild(ammoName, 5)
+        if ammoValue then
+            setupAmmoLock(ammoValue)
+        end
+    end
+end)
+
+task.spawn(function()
+    local playerData = LocalPlayer:WaitForChild("PlayerData", 5)
+    if not playerData then return end
+
+    local function maintainThirst()
+        if Toggles and Toggles.AutoThirst and Toggles.AutoThirst.Value then
+            if playerData:GetAttribute("Thirst") ~= 100 then
+                playerData:SetAttribute("Thirst", 100)
+            end
+        end
+    end
+
+    local function maintainHunger()
+        if Toggles and Toggles.AutoHunger and Toggles.AutoHunger.Value then
+            if playerData:GetAttribute("Hunger") ~= 100 then
+                playerData:SetAttribute("Hunger", 100)
+            end
+        end
+    end
+
+    maintainThirst()
+    maintainHunger()
+    
+    t_insert(Connections, playerData:GetAttributeChangedSignal("Thirst"):Connect(maintainThirst))
+    t_insert(Connections, playerData:GetAttributeChangedSignal("Hunger"):Connect(maintainHunger))
+    
+    if Toggles then
+        if Toggles.AutoThirst then Toggles.AutoThirst:OnChanged(maintainThirst) end
+        if Toggles.AutoHunger then Toggles.AutoHunger:OnChanged(maintainHunger) end
+    end
+end)
+
+SaveManager:LoadAutoloadConfig()
+
+Library:OnUnload(function()
+    for _, conn in ipairs(Connections) do
+        conn:Disconnect()
+    end
+    
+    if FOVCircle then FOVCircle:Remove() end
+    if FOVFilledCircle then FOVFilledCircle:Remove() end
+    if TracerLine then TracerLine:Remove() end
+    
+    if fullbrightConnection then
+        fullbrightConnection:Disconnect()
+    end
+    
+    for player, _ in pairs(ESPCache) do
+        removeESPData(ESPCache, player)
+    end
+
+    for npc, _ in pairs(NPC_ESPCache) do
+        removeESPData(NPC_ESPCache, npc)
+    end
+
+    if OriginalLighting.Brightness then
+        Lighting.Brightness = OriginalLighting.Brightness
+        Lighting.ClockTime = OriginalLighting.ClockTime
+        Lighting.FogEnd = OriginalLighting.FogEnd
+        Lighting.GlobalShadows = OriginalLighting.GlobalShadows
+        Lighting.OutdoorAmbient = OriginalLighting.OutdoorAmbient
+    end
+    
+    Library.Unloaded = true
+end)
