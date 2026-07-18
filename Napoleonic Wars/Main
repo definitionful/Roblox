@@ -1,0 +1,122 @@
+if getgenv()._UnloadPreviousInstance then
+    pcall(getgenv()._UnloadPreviousInstance)
+end
+
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/refs/heads/main/Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/definitionful/Roblox/refs/heads/main/Napoleonic%20Wars/ThemeManager"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/refs/heads/main/addons/SaveManager.lua"))()
+
+getgenv()._UnloadPreviousInstance = function()
+    if Library and not Library.Unloaded then
+        Library:Unload()
+    end
+end
+
+local Workspace = game:GetService("Workspace")
+local Terrain = Workspace.Terrain
+local CurrentCamera = Workspace.CurrentCamera
+local TerrainConnection
+local CameraConnection
+
+local function neutralizeVisual(object)
+    if object:IsA("ParticleEmitter") then
+        object.Enabled = false
+        object.Rate = 0
+        task.defer(function()
+            object:Destroy()
+        end)
+    elseif object:IsA("Light") then
+        task.defer(function()
+            object:Destroy()
+        end)
+    end
+end
+
+local function monitorTerrainChild(child)
+    if child:IsA("Attachment") then
+        for _, descendant in ipairs(child:GetDescendants()) do
+            neutralizeVisual(descendant)
+        end
+        child.DescendantAdded:Connect(neutralizeVisual)
+    end
+end
+
+local function monitorCameraChild(child)
+    if child.Name == "CombatScreenEffectsPart" or child:IsA("Attachment") then
+        for _, descendant in ipairs(child:GetDescendants()) do
+            neutralizeVisual(descendant)
+        end
+        child.DescendantAdded:Connect(neutralizeVisual)
+    end
+end
+
+local Window = Library:CreateWindow({
+    Title      = 'SCP | Phoenix',
+    Center     = true,
+    AutoShow   = true,
+    TabPadding = 8,
+    MenuFadeTime = 0.2
+})
+
+local Tabs = {
+    Combat = Window:AddTab('Combat'),
+    Visuals = Window:AddTab('Visuals'),
+    Misc = Window:AddTab('Misc'),
+    Settings = Window:AddTab('Settings')
+}
+
+local WeaponGroup = Tabs.Combat:AddLeftGroupbox('Weapon')
+local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
+
+WeaponGroup:AddToggle('CleanTerrain', { Text = 'Clean Terrain Visuals', Default = false }):OnChanged(function()
+    if Toggles.CleanTerrain.Value then
+        for _, child in ipairs(Terrain:GetChildren()) do
+            monitorTerrainChild(child)
+        end
+        TerrainConnection = Terrain.ChildAdded:Connect(monitorTerrainChild)
+    else
+        if TerrainConnection then
+            TerrainConnection:Disconnect()
+            TerrainConnection = nil
+        end
+    end
+end)
+
+WeaponGroup:AddToggle('CleanCamera', { Text = 'Clean Camera Visuals', Default = false }):OnChanged(function()
+    if Toggles.CleanCamera.Value then
+        for _, child in ipairs(CurrentCamera:GetChildren()) do
+            monitorCameraChild(child)
+        end
+        CameraConnection = CurrentCamera.ChildAdded:Connect(monitorCameraChild)
+    else
+        if CameraConnection then
+            CameraConnection:Disconnect()
+            CameraConnection = nil
+        end
+    end
+end)
+
+MenuGroup:AddToggle('WatermarkToggle', { Text = 'Watermark', Default = false }):OnChanged(function()
+    Library:SetWatermarkVisibility(Toggles.WatermarkToggle.Value)
+end)
+
+MenuGroup:AddToggle('KeybindsToggle', { Text = 'Keybinds', Default = false }):OnChanged(function()
+    Library.KeybindFrame.Visible = Toggles.KeybindsToggle.Value
+end)
+
+Library:SetWatermark('Napoleonic Wars Client')
+Library:SetWatermarkVisibility(false)
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+ThemeManager:SetFolder('SilentAimConfig')
+SaveManager:SetFolder('SilentAimConfig')
+SaveManager:IgnoreThemeSettings()
+ThemeManager:ApplyToTab(Tabs.Settings)
+SaveManager:BuildConfigSection(Tabs.Settings)
+
+Library:OnUnload(function()
+    if TerrainConnection then TerrainConnection:Disconnect() end
+    if CameraConnection then CameraConnection:Disconnect() end
+    Library.Unloaded = true
+end)
