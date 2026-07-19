@@ -15,8 +15,54 @@ end
 local Workspace = game:GetService("Workspace")
 local Terrain = Workspace.Terrain
 local CurrentCamera = Workspace.CurrentCamera
+local RunService = game:GetService("RunService")
+
 local TerrainConnection
 local CameraConnection
+local TerrainDescendantConnections = {}
+local CameraDescendantConnections = {}
+
+local combatModule = nil
+local origGetMisfired, origCannonPass, origBulletPass
+
+for _, v in pairs(getgc(true)) do
+    if type(v) == "table" and rawget(v, "getMisfired") and rawget(v, "bulletPass") and rawget(v, "cannonPassMoraleShock") then
+        combatModule = v
+        origGetMisfired = v.getMisfired
+        origCannonPass = v.cannonPassMoraleShock
+        origBulletPass = v.bulletPass
+        break
+    end
+end
+
+if not combatModule and getloadedmodules then
+    for _, mod in pairs(getloadedmodules()) do
+        if typeof(mod) == "Instance" and mod:IsA("ModuleScript") then
+            local success, ret = pcall(require, mod)
+            if success and type(ret) == "table" and rawget(ret, "getMisfired") then
+                combatModule = ret
+                origGetMisfired = ret.getMisfired
+                origCannonPass = ret.cannonPassMoraleShock
+                origBulletPass = ret.bulletPass
+                break
+            end
+        end
+    end
+end
+
+local camShakers = {}
+local shakeClasses = {}
+
+for _, obj in pairs(getgc(true)) do
+    if type(obj) == "table" then
+        if rawget(obj, "_camShakeInstances") and rawget(obj, "Update") then
+            table.insert(camShakers, {instance = obj, origUpdate = obj.Update})
+        end
+        if rawget(obj, "UpdateShake") then
+            table.insert(shakeClasses, {instance = obj, origUpdateShake = obj.UpdateShake})
+        end
+    end
+end
 
 local function neutralizeVisual(object)
     if object:IsA("ParticleEmitter") then
@@ -37,7 +83,7 @@ local function monitorTerrainChild(child)
         for _, descendant in ipairs(child:GetDescendants()) do
             neutralizeVisual(descendant)
         end
-        child.DescendantAdded:Connect(neutralizeVisual)
+        table.insert(TerrainDescendantConnections, child.DescendantAdded:Connect(neutralizeVisual))
     end
 end
 
@@ -46,12 +92,12 @@ local function monitorCameraChild(child)
         for _, descendant in ipairs(child:GetDescendants()) do
             neutralizeVisual(descendant)
         end
-        child.DescendantAdded:Connect(neutralizeVisual)
+        table.insert(CameraDescendantConnections, child.DescendantAdded:Connect(neutralizeVisual))
     end
 end
 
 local Window = Library:CreateWindow({
-    Title      = 'SCP | Phoenix',
+    Title      = 'Napoleonic Wars',
     Center     = true,
     AutoShow   = true,
     TabPadding = 8,
@@ -65,7 +111,8 @@ local Tabs = {
     Settings = Window:AddTab('Settings')
 }
 
-local WeaponGroup = Tabs.Combat:AddLeftGroupbox('Weapon')
+local WeaponGroup = Tabs.Misc:AddLeftGroupbox('Weapon')
+local PlayerGroup = Tabs.Misc:AddRightGroupbox('Player')
 local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
 
 WeaponGroup:AddToggle('CleanTerrain', { Text = 'Clean Terrain Visuals', Default = false }):OnChanged(function()
@@ -79,6 +126,10 @@ WeaponGroup:AddToggle('CleanTerrain', { Text = 'Clean Terrain Visuals', Default 
             TerrainConnection:Disconnect()
             TerrainConnection = nil
         end
+        for _, conn in ipairs(TerrainDescendantConnections) do
+            conn:Disconnect()
+        end
+        table.clear(TerrainDescendantConnections)
     end
 end)
 
@@ -92,6 +143,69 @@ WeaponGroup:AddToggle('CleanCamera', { Text = 'Clean Camera Visuals', Default = 
         if CameraConnection then
             CameraConnection:Disconnect()
             CameraConnection = nil
+        end
+        for _, conn in ipairs(CameraDescendantConnections) do
+            conn:Disconnect()
+        end
+        table.clear(CameraDescendantConnections)
+    end
+end)
+
+WeaponGroup:AddToggle('AntiMisfire', { Text = 'Anti-Misfire', Default = false }):OnChanged(function()
+    if combatModule then
+        if Toggles.AntiMisfire.Value then
+            combatModule.getMisfired = function() return false, false end
+        else
+            combatModule.getMisfired = origGetMisfired
+        end
+    end
+end)
+
+PlayerGroup:AddToggle('AntiSuppression', { Text = 'Anti-Suppression', Default = false }):OnChanged(function()
+    if combatModule then
+        if Toggles.AntiSuppression.Value then
+            combatModule.cannonPassMoraleShock = function() end
+            combatModule.bulletPass = function() end
+        else
+            combatModule.cannonPassMoraleShock = origCannonPass
+            combatModule.bulletPass = origBulletPass
+        end
+    end
+end)
+
+local camShakeTask
+PlayerGroup:AddToggle('NoCameraShake', { Text = 'No Camera Shake', Default = false }):OnChanged(function()
+    local state = Toggles.NoCameraShake.Value
+    
+    for _, shaker in ipairs(camShakers) do
+        if state then
+            shaker.instance._camShakeInstances = {}
+            shaker.instance.Update = function() return CFrame.new() end
+        else
+            shaker.instance.Update = shaker.origUpdate
+        end
+    end
+    
+    for _, shakerClass in ipairs(shakeClasses) do
+        if state then
+            shakerClass.instance.UpdateShake = function() return Vector3.new(0, 0, 0) end
+        else
+            shakerClass.instance.UpdateShake = shakerClass.origUpdateShake
+        end
+    end
+    
+    if state then
+        camShakeTask = task.spawn(function()
+            while task.wait(0.5) do
+                pcall(function()
+                    RunService:UnbindFromRenderStep("CameraShaker")
+                end)
+            end
+        end)
+    else
+        if camShakeTask then
+            task.cancel(camShakeTask)
+            camShakeTask = nil
         end
     end
 end)
@@ -109,8 +223,8 @@ Library:SetWatermarkVisibility(false)
 
 ThemeManager:SetLibrary(Library)
 SaveManager:SetLibrary(Library)
-ThemeManager:SetFolder('SilentAimConfig')
-SaveManager:SetFolder('SilentAimConfig')
+ThemeManager:SetFolder('NapoleonicWarsConfig')
+SaveManager:SetFolder('NapoleonicWarsConfig')
 SaveManager:IgnoreThemeSettings()
 ThemeManager:ApplyToTab(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
@@ -118,5 +232,25 @@ SaveManager:BuildConfigSection(Tabs.Settings)
 Library:OnUnload(function()
     if TerrainConnection then TerrainConnection:Disconnect() end
     if CameraConnection then CameraConnection:Disconnect() end
+    
+    for _, conn in ipairs(TerrainDescendantConnections) do conn:Disconnect() end
+    for _, conn in ipairs(CameraDescendantConnections) do conn:Disconnect() end
+    
+    if camShakeTask then task.cancel(camShakeTask) end
+    
+    if combatModule then
+        combatModule.getMisfired = origGetMisfired
+        combatModule.cannonPassMoraleShock = origCannonPass
+        combatModule.bulletPass = origBulletPass
+    end
+    
+    for _, shaker in ipairs(camShakers) do
+        shaker.instance.Update = shaker.origUpdate
+    end
+    
+    for _, shakerClass in ipairs(shakeClasses) do
+        shakerClass.instance.UpdateShake = shakerClass.origUpdateShake
+    end
+    
     Library.Unloaded = true
 end)
