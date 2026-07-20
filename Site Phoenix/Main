@@ -19,6 +19,7 @@ local Teams = game:GetService("Teams")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Lighting = game:GetService("Lighting")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -135,7 +136,6 @@ local Tabs = {
 
 local SilentAimGroup = Tabs.Combat:AddLeftGroupbox('Player Silent Aim')
 local NPCSilentAimGroup = Tabs.Combat:AddLeftGroupbox('NPC Silent Aim')
-local WeaponGroup = Tabs.Combat:AddLeftGroupbox('Weapon')
 local FOVGroup = Tabs.Combat:AddRightGroupbox('FOV')
 local TracerGroup = Tabs.Combat:AddRightGroupbox('Tracer')
 
@@ -144,6 +144,7 @@ local WorldGroup = Tabs.Visuals:AddLeftGroupbox('World')
 local NPCESPGroup = Tabs.Visuals:AddRightGroupbox('NPC ESP')
 
 local PlayerGroup = Tabs.Misc:AddLeftGroupbox('Player')
+local WeaponGroup = Tabs.Misc:AddRightGroupbox('Weapon')
 local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
 
 SilentAimGroup:AddToggle('SilentAimEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('SilentAimKeybind', { Default = 'NONE', SyncToggleState = true, Mode = 'Toggle', Text = 'Silent Aim' })
@@ -1310,9 +1311,8 @@ t_insert(Connections, RunService.Heartbeat:Connect(function()
                     local targetY = goal.Position.Y.Scale
                     local currentSliderY = slider.Position.Y.Scale
                     if m_abs(currentSliderY - targetY) <= 0.02 then
-                        local vim = game:GetService("VirtualInputManager")
-                        vim:SendMouseButtonEvent(0, 0, 0, true, game, false)
-                        vim:SendMouseButtonEvent(0, 0, 0, false, game, false)
+                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, false)
+                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, false)
                         weightBenchDebounce = now
                     end
                 end
