@@ -37,8 +37,15 @@ local t_sort = table.sort
 local cf_new = CFrame.new
 local pairs, ipairs, tostring, type, typeof, pcall, setnamecallmethod = pairs, ipairs, tostring, type, typeof, pcall, setnamecallmethod
 
+local VISUAL_EFFECTS = {"PainBlur", "InsanityDOF", "FearCorrection", "InsanityCorrection", "PainCorrection", "PainSootheCorrection", "SCPInfectedVision"}
+
+local drawingPropCache = {}
 local function setDrawingProp(drawing, prop, value)
-    if drawing[prop] ~= value then
+    if not drawingPropCache[drawing] then
+        drawingPropCache[drawing] = {}
+    end
+    if drawingPropCache[drawing][prop] ~= value then
+        drawingPropCache[drawing][prop] = value
         drawing[prop] = value
     end
 end
@@ -101,6 +108,9 @@ local OriginalLighting = {
 local sharedRaycastParams = RaycastParams.new()
 sharedRaycastParams.FilterType = Enum.RaycastFilterType.Exclude
 
+local noSpreadRayParams = RaycastParams.new()
+noSpreadRayParams.FilterType = Enum.RaycastFilterType.Exclude
+
 local lastRaycastCamera = nil
 local lastRaycastCharacter = nil
 
@@ -123,7 +133,8 @@ local Tabs = {
     Settings = Window:AddTab('Settings')
 }
 
-local SilentAimGroup = Tabs.Combat:AddLeftGroupbox('Silent Aim')
+local SilentAimGroup = Tabs.Combat:AddLeftGroupbox('Player Silent Aim')
+local NPCSilentAimGroup = Tabs.Combat:AddLeftGroupbox('NPC Silent Aim')
 local WeaponGroup = Tabs.Combat:AddLeftGroupbox('Weapon')
 local FOVGroup = Tabs.Combat:AddRightGroupbox('FOV')
 local TracerGroup = Tabs.Combat:AddRightGroupbox('Tracer')
@@ -136,9 +147,12 @@ local PlayerGroup = Tabs.Misc:AddLeftGroupbox('Player')
 local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
 
 SilentAimGroup:AddToggle('SilentAimEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('SilentAimKeybind', { Default = 'NONE', SyncToggleState = true, Mode = 'Toggle', Text = 'Silent Aim' })
+SilentAimGroup:AddToggle('RandomizeBullets', { Text = 'Multi-Bullets', Default = false })
+SilentAimGroup:AddSlider('MultiBulletChance', { Text = 'Multi-Bullet Aim Chance', Default = 30, Min = 0, Max = 100, Rounding = 0, Compact = false })
 SilentAimGroup:AddToggle('MultipointEnabled', { Text = 'Multipoint', Default = false })
 SilentAimGroup:AddToggle('PrioritizeArmed', { Text = 'Prioritize Armed', Default = false })
 SilentAimGroup:AddSlider('Hitchance', { Text = 'Hitchance', Default = 100, Min = 0, Max = 100, Rounding = 0, Compact = false })
+SilentAimGroup:AddSlider('CloseRangeBypass', { Text = 'Close Range Bypass (Studs)', Default = 20, Min = 0, Max = 100, Rounding = 0, Compact = false })
 SilentAimGroup:AddDropdown('Hitpart', { Values = { 'Head', 'HumanoidRootPart', 'Random' }, Default = 1, Multi = false, Text = 'Hitpart' })
 SilentAimGroup:AddDropdown('PriorityPart', { Values = { 'Head', 'HumanoidRootPart', 'UpperTorso', 'LowerTorso' }, Default = 1, Multi = false, Text = 'Priority Part' })
 SilentAimGroup:AddSlider('PriorityChance', { Text = 'Priority Chance', Default = 50, Min = 0, Max = 100, Rounding = 0, Compact = false })
@@ -152,23 +166,28 @@ end
 t_sort(TeamNames)
 
 SilentAimGroup:AddDropdown('IgnoredTeams', { Values = TeamNames, Default = {}, Multi = true, Text = 'Ignored Teams' })
-SilentAimGroup:AddToggle('TargetNPCsEnabled', { Text = 'Target NPCs', Default = false })
-SilentAimGroup:AddDropdown('TargetNPCs', { Values = {}, Default = {}, Multi = true, Text = 'Select NPCs' })
 
 local scpFolder = Workspace:FindFirstChild("SCPs")
 local scpHumanoids = scpFolder and scpFolder:FindFirstChild("Humanoids")
 
-SilentAimGroup:AddButton('Refresh NPCs', function()
+NPCSilentAimGroup:AddToggle('NPCSilentAimEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('NPCSilentAimKeybind', { Default = 'NONE', SyncToggleState = true, Mode = 'Toggle', Text = 'NPC Silent Aim' })
+NPCSilentAimGroup:AddDropdown('TargetNPCs', { Values = {}, Default = {}, Multi = true, Text = 'Select NPCs' })
+NPCSilentAimGroup:AddButton('Refresh NPCs', function()
     local names = {}
+    local seenNPCs = {}
     if scpHumanoids then
         for _, v in ipairs(scpHumanoids:GetChildren()) do
-            if v:IsA("Model") and not table.find(names, v.Name) then
+            if v:IsA("Model") and not seenNPCs[v.Name] then
+                seenNPCs[v.Name] = true
                 t_insert(names, v.Name)
             end
         end
     end
     Options.TargetNPCs:SetValues(names)
 end)
+NPCSilentAimGroup:AddDropdown('NPCHitpart', { Values = { 'Head', 'HumanoidRootPart', 'Random' }, Default = 1, Multi = false, Text = 'Hitpart' })
+NPCSilentAimGroup:AddSlider('NPCHitchance', { Text = 'Hitchance', Default = 100, Min = 0, Max = 100, Rounding = 0, Compact = false })
+NPCSilentAimGroup:AddSlider('NPCCloseRangeBypass', { Text = 'Close Range Bypass (Studs)', Default = 20, Min = 0, Max = 100, Rounding = 0, Compact = false })
 
 WeaponGroup:AddToggle('DisableCameraShake', { Text = 'Disable Camera Shake', Default = false })
 WeaponGroup:AddToggle('InfiniteAmmo', { Text = 'Infinite Ammo', Default = false })
@@ -209,10 +228,16 @@ NPCESPGroup:AddToggle('NPCESPDistance', { Text = 'Distance', Default = false })
 NPCESPGroup:AddToggle('NPCESPHealth', { Text = 'Health Bar', Default = false })
 NPCESPGroup:AddToggle('NPCESPHealthText', { Text = 'Health Text', Default = false })
 
+PlayerGroup:AddToggle('DisableVisualEffects', { Text = 'Disable Visual Effects', Default = false })
 PlayerGroup:AddToggle('InstantInteract', { Text = 'Instant Interact', Default = false })
 PlayerGroup:AddToggle('InfiniteStamina', { Text = 'Infinite Stamina', Default = false })
 PlayerGroup:AddToggle('AutoThirst', { Text = 'Auto Thirst', Default = false })
 PlayerGroup:AddToggle('AutoHunger', { Text = 'Auto Hunger', Default = false })
+PlayerGroup:AddToggle('AutoWeightBench', { Text = 'Auto Weight Bench', Default = false })
+PlayerGroup:AddToggle('CustomWalkSpeed', { Text = 'Custom WalkSpeed', Default = false })
+PlayerGroup:AddInput('WalkSpeedValue', { Default = '8', Numeric = true, Finished = false, Text = 'WalkSpeed', Placeholder = '8' })
+PlayerGroup:AddToggle('CustomSprintSpeed', { Text = 'Custom SprintSpeed', Default = false })
+PlayerGroup:AddInput('SprintSpeedValue', { Default = '24', Numeric = true, Finished = false, Text = 'SprintSpeed', Placeholder = '24' })
 
 MenuGroup:AddToggle('WatermarkToggle', { Text = 'Watermark', Default = false }):OnChanged(function()
     Library:SetWatermarkVisibility(Toggles.WatermarkToggle.Value)
@@ -373,6 +398,13 @@ local function removeESPData(cacheTable, key)
         data.DistanceTag:Remove()
         data.HealthTextTag:Remove()
         data.ToolTag:Remove()
+        drawingPropCache[data.Box] = nil
+        drawingPropCache[data.HealthBarBg] = nil
+        drawingPropCache[data.HealthBar] = nil
+        drawingPropCache[data.NameTag] = nil
+        drawingPropCache[data.DistanceTag] = nil
+        drawingPropCache[data.HealthTextTag] = nil
+        drawingPropCache[data.ToolTag] = nil
         cacheTable[key] = nil
     end
 end
@@ -420,7 +452,7 @@ local function isHoldingPrioritizedWeapon(character)
 end
 
 local function getClosestCharacterToMouse(mousePos, currentCamera)
-    if not currentCamera then return nil, nil, nil end
+    if not currentCamera then return nil, nil, nil, false end
 
     local fovEnabled = Toggles and Toggles.FOVEnabled and Toggles.FOVEnabled.Value
     local fovRadiusSq = Options and Options.FOVRadius and (Options.FOVRadius.Value * Options.FOVRadius.Value) or 10000
@@ -428,6 +460,13 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
     local teamCheck = Toggles and Toggles.TeamCheck and Toggles.TeamCheck.Value
     local ignoredTeams = Options and Options.IgnoredTeams and Options.IgnoredTeams.Value or {}
     
+    local targetPlayers = Toggles and Toggles.SilentAimEnabled and Toggles.SilentAimEnabled.Value
+    local targetNPCsToggle = Toggles and Toggles.NPCSilentAimEnabled and Toggles.NPCSilentAimEnabled.Value
+
+    if not targetPlayers and not targetNPCsToggle then
+        return nil, nil, nil, false
+    end
+
     local localChar = LocalPlayer.Character
     if lastRaycastCamera ~= currentCamera or lastRaycastCharacter ~= localChar then
         lastRaycastCamera = currentCamera
@@ -436,6 +475,13 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
         if localChar then
             t_insert(filter, localChar)
         end
+        local debrisFolder = Workspace:FindFirstChild("Debris")
+        if debrisFolder then
+            local rayExceptionFolder = debrisFolder:FindFirstChild("RayException")
+            if rayExceptionFolder then
+                t_insert(filter, rayExceptionFolder)
+            end
+        end
         sharedRaycastParams.FilterDescendantsInstances = filter
     end
     
@@ -443,22 +489,23 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
     local potentialTargets = {}
     local entities = {}
 
-    for player, data in pairs(ESPCache) do
-        local cached = validateCache(player, data, false)
-        if cached and cached.Humanoid and cached.Humanoid.Health > 0 then
-            if teamCheck and player.Team and ignoredTeams[player.Team.Name] then continue end
-            t_insert(entities, {
-                character = cached.Character,
-                head = cached.Character:FindFirstChild("Head"),
-                hrp = cached.HRP
-            })
+    if targetPlayers then
+        for player, data in pairs(ESPCache) do
+            local cached = validateCache(player, data, false)
+            if cached and cached.Humanoid and cached.Humanoid.Health > 0 then
+                if teamCheck and player.Team and ignoredTeams[player.Team.Name] then continue end
+                t_insert(entities, {
+                    character = cached.Character,
+                    head = cached.Character:FindFirstChild("Head"),
+                    hrp = cached.HRP,
+                    isNPC = false
+                })
+            end
         end
     end
 
-    local targetNPCsToggle = Toggles and Toggles.TargetNPCsEnabled and Toggles.TargetNPCsEnabled.Value
-    local targetNPCs = Options and Options.TargetNPCs and Options.TargetNPCs.Value or {}
-
     if targetNPCsToggle then
+        local targetNPCs = Options and Options.TargetNPCs and Options.TargetNPCs.Value or {}
         for npc, data in pairs(NPC_ESPCache) do
             if targetNPCs[npc.Name] then
                 local cached = validateCache(npc, data, true)
@@ -466,18 +513,19 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
                     t_insert(entities, {
                         character = cached.Character,
                         head = cached.Character:FindFirstChild("Head"),
-                        hrp = cached.HRP
+                        hrp = cached.HRP,
+                        isNPC = true
                     })
                 end
             end
         end
     end
 
+    local now = os.clock()
     for i = 1, #entities do
         local entity = entities[i]
-        local targetPartName = Options and Options.Hitpart and Options.Hitpart.Value or "HumanoidRootPart"
+        local targetPartName = entity.isNPC and (Options and Options.NPCHitpart and Options.NPCHitpart.Value or "HumanoidRootPart") or (Options and Options.Hitpart and Options.Hitpart.Value or "HumanoidRootPart")
         local targetPart
-        local now = os.clock()
         
         if not TargetCache[entity.character] then
             TargetCache[entity.character] = { part = nil, lastUpdate = 0 }
@@ -517,6 +565,14 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
         
         targetPart = cache.part
         if not targetPart then continue end
+
+        local rootScreenPos, rootOnScreen = currentCamera:WorldToViewportPoint(targetPart.Position)
+        if fovEnabled and rootOnScreen then
+            local rootDistSq = (rootScreenPos.X - mousePos.X) * (rootScreenPos.X - mousePos.X) + (rootScreenPos.Y - mousePos.Y) * (rootScreenPos.Y - mousePos.Y)
+            if rootDistSq > (fovRadiusSq * 3) then
+                continue
+            end
+        end
         
         if Toggles and Toggles.MultipointEnabled and Toggles.MultipointEnabled.Value then
             local size = targetPart.Size * 0.8
@@ -571,8 +627,9 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
                     part = targetPart,
                     hitPos = point,
                     character = entity.character,
-                    hasPriority = isHoldingPrioritizedWeapon(entity.character),
-                    isVisible = bestVisibleOffset ~= nil
+                    hasPriority = not entity.isNPC and isHoldingPrioritizedWeapon(entity.character),
+                    isVisible = bestVisibleOffset ~= nil,
+                    isNPC = entity.isNPC
                 })
             end
         else
@@ -596,8 +653,9 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
                         part = targetPart,
                         hitPos = point,
                         character = entity.character,
-                        hasPriority = isHoldingPrioritizedWeapon(entity.character),
-                        isVisible = isVisible
+                        hasPriority = not entity.isNPC and isHoldingPrioritizedWeapon(entity.character),
+                        isVisible = isVisible,
+                        isNPC = entity.isNPC
                     })
                 end
             end
@@ -622,10 +680,10 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
             continue
         end
         
-        return target.pos2D, target.part, target.hitPos
+        return target.pos2D, target.part, target.hitPos, target.isNPC
     end
     
-    return nil, nil, nil
+    return nil, nil, nil, false
 end
 
 local fullbrightConnection
@@ -664,33 +722,49 @@ WorldGroup:AddToggle('Fullbright', { Text = 'Fullbright', Default = false }):OnC
     end
 end)
 
-WorldGroup:AddToggle('DisableVisualEffects', { Text = 'Disable Visual Effects', Default = false })
-
 local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
     local tggls = Toggles
     local opts = Options
     if not (tggls and opts) then return end
 
-    local espEnabled = isNPC and tggls.NPCESPEnabled.Value or (not isNPC and tggls.ESPEnabled.Value)
+    local espEnabled, boxEnabled, skeletonEnabled, nameEnabled, distanceEnabled, healthEnabled, healthTextEnabled
+    local boxColorVal, nameColorVal, skelColorVal, boxTypeVal
     
+    local teamColorEnabled = not isNPC and tggls.ESPTeamColor.Value
+    local toolEnabled = not isNPC and tggls.ESPTool.Value
+
+    if isNPC then
+        espEnabled = tggls.NPCESPEnabled.Value
+        boxEnabled = tggls.NPCESPBox.Value
+        skeletonEnabled = tggls.NPCESPSkeleton.Value
+        nameEnabled = tggls.NPCESPName.Value
+        distanceEnabled = tggls.NPCESPDistance.Value
+        healthEnabled = tggls.NPCESPHealth.Value
+        healthTextEnabled = tggls.NPCESPHealthText.Value
+        
+        boxColorVal = opts.NPCBoxColor.Value
+        nameColorVal = opts.NPCNameColor.Value
+        skelColorVal = opts.NPCSkeletonColor.Value
+        boxTypeVal = opts.NPCESPBoxType.Value
+    else
+        espEnabled = tggls.ESPEnabled.Value
+        boxEnabled = tggls.ESPBox.Value
+        skeletonEnabled = tggls.ESPSkeleton.Value
+        nameEnabled = tggls.ESPName.Value
+        distanceEnabled = tggls.ESPDistance.Value
+        healthEnabled = tggls.ESPHealth.Value
+        healthTextEnabled = tggls.ESPHealthText.Value
+        
+        boxColorVal = opts.BoxColor.Value
+        nameColorVal = opts.NameColor.Value
+        skelColorVal = opts.SkeletonColor.Value
+        boxTypeVal = opts.ESPBoxType.Value
+    end
+
     if not espEnabled then
         for _, data in pairs(cacheTable) do hideVisuals(data) end
         return
     end
-
-    local teamColorEnabled = not isNPC and tggls.ESPTeamColor.Value
-    local boxEnabled = isNPC and tggls.NPCESPBox.Value or (not isNPC and tggls.ESPBox.Value)
-    local skeletonEnabled = isNPC and tggls.NPCESPSkeleton.Value or (not isNPC and tggls.ESPSkeleton.Value)
-    local nameEnabled = isNPC and tggls.NPCESPName.Value or (not isNPC and tggls.ESPName.Value)
-    local distanceEnabled = isNPC and tggls.NPCESPDistance.Value or (not isNPC and tggls.ESPDistance.Value)
-    local healthEnabled = isNPC and tggls.NPCESPHealth.Value or (not isNPC and tggls.ESPHealth.Value)
-    local toolEnabled = not isNPC and tggls.ESPTool.Value
-    local healthTextEnabled = isNPC and tggls.NPCESPHealthText.Value or (not isNPC and tggls.ESPHealthText.Value)
-    
-    local boxColorVal = isNPC and opts.NPCBoxColor.Value or opts.BoxColor.Value
-    local nameColorVal = isNPC and opts.NPCNameColor.Value or opts.NameColor.Value
-    local skelColorVal = isNPC and opts.NPCSkeletonColor.Value or opts.SkeletonColor.Value
-    local boxTypeVal = isNPC and opts.NPCESPBoxType.Value or opts.ESPBoxType.Value
     
     local needsBox = boxEnabled or nameEnabled or distanceEnabled or healthEnabled or toolEnabled or healthTextEnabled
 
@@ -723,7 +797,7 @@ local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
 
             if isBoxVisible then
                 local boxHeight = m_abs(topPos.Y - bottomPos.Y)
-                local boxWidth = boxHeight / 1.6
+                local boxWidth = boxHeight * 0.625
                 local boxX = topPos.X - (boxWidth / 2)
                 local boxY = topPos.Y
 
@@ -886,9 +960,8 @@ t_insert(Connections, RunService.RenderStepped:Connect(function()
     if not (tggls and opts) then return end
 
     if tggls.DisableVisualEffects and tggls.DisableVisualEffects.Value then
-        local visualEffects = {"PainBlur", "InsanityDOF", "FearCorrection", "InsanityCorrection", "PainCorrection", "PainSootheCorrection", "SCPInfectedVision"}
-        for _, effectName in ipairs(visualEffects) do
-            local effect = Lighting:FindFirstChild(effectName)
+        for i = 1, #VISUAL_EFFECTS do
+            local effect = Lighting:FindFirstChild(VISUAL_EFFECTS[i])
             if effect and effect.Enabled then
                 effect.Enabled = false
             end
@@ -947,44 +1020,123 @@ t_insert(Connections, RunService.RenderStepped:Connect(function()
     updateVisualsForCache(NPC_ESPCache, currentCamera, camPos, true)
 end))
 
+local oldIndex
+oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
+    if checkcaller() or (Library and Library.Unloaded) then
+        return oldIndex(self, key)
+    end
+    if typeof(self) == "Instance" then
+        if key == "Value" then
+            if self.Name == "BulletSpread" and Toggles and Toggles.NoSpread and Toggles.NoSpread.Value then
+                local realVal = oldIndex(self, key)
+                if type(realVal) == "number" then return 0 end
+                if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
+                if typeof(realVal) == "Vector2" then return v2(0, 0) end
+                return 0
+            elseif self.Name == "Recoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
+                local realVal = oldIndex(self, key)
+                if type(realVal) == "number" then return 0 end
+                if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
+                if typeof(realVal) == "Vector2" then return v2(0, 0) end
+                return 0
+            end
+        end
+    end
+    return oldIndex(self, key)
+end))
+
 local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(...)
-    local args = {...}
-    local self = args[1]
-
-    if Library and Library.Unloaded then
+    if checkcaller() or (Library and Library.Unloaded) then
         return oldNamecall(...)
     end
 
+    local args = {...}
+    local self = args[1]
     local Method = getnamecallmethod()
-    local tggls = Toggles
-    local opts = Options
+    
+    if typeof(self) == "Instance" then
+        if (Method == "GetAttribute" or Method == "getAttribute") then
+            if #args >= 2 and args[2] == "BulletSpread" and Toggles and Toggles.NoSpread and Toggles.NoSpread.Value then
+                local realVal = oldNamecall(...)
+                if type(realVal) == "number" then return 0 end
+                if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
+                if typeof(realVal) == "Vector2" then return v2(0, 0) end
+                return 0
+            end
+            if #args >= 2 and args[2] == "Recoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
+                local realVal = oldNamecall(...)
+                if type(realVal) == "number" then return 0 end
+                if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
+                if typeof(realVal) == "Vector2" then return v2(0, 0) end
+                return 0
+            end
+        elseif Method == "BindToRenderStep" and #args >= 2 and args[2] == "CameraRecoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
+            return
+        elseif Method == "Fire" and self.Name == "CameraShake" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
+            return
+        elseif Method == "FireServer" and self.Name == "GunEvent" and #args >= 3 and args[2] == "FireShot" and type(args[3]) == "table" then
+            local tggls = Toggles
+            local opts = Options
+            if tggls and opts then
+                local overriden = false
+                local shouldSilentAim = true
+                if tggls.RandomizeBullets and tggls.RandomizeBullets.Value then
+                    if not CalculateChance(opts.MultiBulletChance.Value) then
+                        shouldSilentAim = false
+                    end
+                end
 
-    if not checkcaller() and tggls then
-        if Method == "GetAttribute" then
-            if args[2] == "BulletSpread" and tggls.NoSpread.Value then
-                return 0
-            end
-            if args[2] == "Recoil" and tggls.NoRecoil.Value then
-                return 0
-            end
-        elseif Method == "FireServer" and tggls.SilentAimEnabled.Value then
-            if typeof(self) == "Instance" and self.Name == "GunEvent" and args[2] == "FireShot" and type(args[3]) == "table" then
-                if opts and opts.Hitchance and CalculateChance(opts.Hitchance.Value) then
+                if shouldSilentAim then
                     local currentCamera = Workspace.CurrentCamera
                     local mousePos = UserInputService:GetMouseLocation()
-                    local _, HitPart, HitPos = getClosestCharacterToMouse(mousePos, currentCamera)
+                    local _, HitPart, HitPos, isNPC = getClosestCharacterToMouse(mousePos, currentCamera)
                     
                     if HitPart and HitPos then
-                        args[3].HitPart = HitPart
-                        args[3].HitPos = HitPos
+                        local chance = isNPC and opts.NPCHitchance.Value or opts.Hitchance.Value
+                        local bypassDistance = isNPC and opts.NPCCloseRangeBypass.Value or opts.CloseRangeBypass.Value
+                        local playerChar = LocalPlayer.Character
                         
-                        if setnamecallmethod then setnamecallmethod(Method) end
-                        return oldNamecall(table.unpack(args))
+                        if playerChar then
+                            local hrp = playerChar:FindFirstChild("HumanoidRootPart")
+                            if hrp then
+                                local distance3D = (hrp.Position - HitPos).Magnitude
+                                if distance3D <= bypassDistance then
+                                    chance = 100
+                                end
+                            end
+                        end
+                        
+                        if CalculateChance(chance) then
+                            args[3].HitPart = HitPart
+                            args[3].HitPos = HitPos
+                            overriden = true
+                        end
                     end
-                    
-                    if setnamecallmethod then setnamecallmethod(Method) end
                 end
+                
+                if not overriden and tggls.NoSpread and tggls.NoSpread.Value then
+                    local origin = args[3].Origin
+                    local mouse = LocalPlayer:GetMouse()
+                    if origin and mouse then
+                        local dir = (mouse.Hit.Position - origin).Unit * 1000
+                        noSpreadRayParams.FilterDescendantsInstances = {LocalPlayer.Character, Workspace:FindFirstChild("Debris")}
+                        
+                        local result = Workspace:Raycast(origin, dir, noSpreadRayParams)
+                        if result then
+                            args[3].HitPart = result.Instance
+                            args[3].HitPos = result.Position
+                            args[3].HitNormal = result.Normal
+                        else
+                            args[3].HitPart = nil
+                            args[3].HitPos = origin + dir
+                            args[3].HitNormal = v3(0, 1, 0)
+                        end
+                    end
+                end
+                
+                if setnamecallmethod then setnamecallmethod(Method) end
+                return oldNamecall(table.unpack(args))
             end
         end
     end
@@ -1141,6 +1293,52 @@ task.spawn(function()
         if Toggles.AutoHunger then Toggles.AutoHunger:OnChanged(maintainHunger) end
     end
 end)
+
+local weightBenchDebounce = 0
+t_insert(Connections, RunService.Heartbeat:Connect(function()
+    local now = os.clock()
+    
+    if Toggles and Toggles.AutoWeightBench and Toggles.AutoWeightBench.Value then
+        if now - weightBenchDebounce >= 0.25 then
+            local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+            local minigame = playerGui and playerGui:FindFirstChild("WeightBenchMinigame")
+            if minigame then
+                local bar = minigame:FindFirstChild("Bar")
+                local goal = bar and bar:FindFirstChild("Goal")
+                local slider = bar and bar:FindFirstChild("Slider")
+                if goal and slider then
+                    local targetY = goal.Position.Y.Scale
+                    local currentSliderY = slider.Position.Y.Scale
+                    if m_abs(currentSliderY - targetY) <= 0.02 then
+                        local vim = game:GetService("VirtualInputManager")
+                        vim:SendMouseButtonEvent(0, 0, 0, true, game, false)
+                        vim:SendMouseButtonEvent(0, 0, 0, false, game, false)
+                        weightBenchDebounce = now
+                    end
+                end
+            end
+        end
+    end
+    
+    if Toggles then
+        local playerConfig = LocalPlayer:FindFirstChild("PlayerConfig")
+        local movementVariables = playerConfig and playerConfig:FindFirstChild("MovementVariables")
+        if movementVariables then
+            if Toggles.CustomWalkSpeed and Toggles.CustomWalkSpeed.Value then
+                local ws = tonumber(Options.WalkSpeedValue.Value)
+                if ws and movementVariables:GetAttribute("WalkSpeed") ~= ws then
+                    movementVariables:SetAttribute("WalkSpeed", ws)
+                end
+            end
+            if Toggles.CustomSprintSpeed and Toggles.CustomSprintSpeed.Value then
+                local ss = tonumber(Options.SprintSpeedValue.Value)
+                if ss and movementVariables:GetAttribute("SprintSpeed") ~= ss then
+                    movementVariables:SetAttribute("SprintSpeed", ss)
+                end
+            end
+        end
+    end
+end))
 
 SaveManager:LoadAutoloadConfig()
 
