@@ -235,10 +235,38 @@ PlayerGroup:AddToggle('InfiniteStamina', { Text = 'Infinite Stamina', Default = 
 PlayerGroup:AddToggle('AutoThirst', { Text = 'Auto Thirst', Default = false })
 PlayerGroup:AddToggle('AutoHunger', { Text = 'Auto Hunger', Default = false })
 PlayerGroup:AddToggle('AutoWeightBench', { Text = 'Auto Weight Bench', Default = false })
+
+local defaultWalkSpeed = 8
+local defaultSprintSpeed = 24
+if LocalPlayer then
+    local playerConfig = LocalPlayer:WaitForChild("PlayerConfig", 5)
+    if playerConfig then
+        local movementVariables = playerConfig:WaitForChild("MovementVariables", 5)
+        if movementVariables then
+            defaultWalkSpeed = movementVariables:GetAttribute("WalkSpeed") or defaultWalkSpeed
+            defaultSprintSpeed = movementVariables:GetAttribute("SprintSpeed") or defaultSprintSpeed
+        end
+    end
+end
+
 PlayerGroup:AddToggle('CustomWalkSpeed', { Text = 'Custom WalkSpeed', Default = false })
-PlayerGroup:AddInput('WalkSpeedValue', { Default = '8', Numeric = true, Finished = false, Text = 'WalkSpeed', Placeholder = '8' })
+PlayerGroup:AddSlider('WalkSpeedValue', { Text = 'WalkSpeed', Default = defaultWalkSpeed, Min = defaultWalkSpeed, Max = 100, Rounding = 1 })
 PlayerGroup:AddToggle('CustomSprintSpeed', { Text = 'Custom SprintSpeed', Default = false })
-PlayerGroup:AddInput('SprintSpeedValue', { Default = '24', Numeric = true, Finished = false, Text = 'SprintSpeed', Placeholder = '24' })
+PlayerGroup:AddSlider('SprintSpeedValue', { Text = 'SprintSpeed', Default = defaultSprintSpeed, Min = defaultSprintSpeed, Max = 100, Rounding = 1 })
+
+Options.WalkSpeedValue:OnChanged(function()
+    local stepped = math.floor(Options.WalkSpeedValue.Value * 2 + 0.5) / 2
+    if Options.WalkSpeedValue.Value ~= stepped then
+        Options.WalkSpeedValue:SetValue(stepped)
+    end
+end)
+
+Options.SprintSpeedValue:OnChanged(function()
+    local stepped = math.floor(Options.SprintSpeedValue.Value * 2 + 0.5) / 2
+    if Options.SprintSpeedValue.Value ~= stepped then
+        Options.SprintSpeedValue:SetValue(stepped)
+    end
+end)
 
 MenuGroup:AddToggle('WatermarkToggle', { Text = 'Watermark', Default = false }):OnChanged(function()
     Library:SetWatermarkVisibility(Toggles.WatermarkToggle.Value)
@@ -434,16 +462,19 @@ if scpHumanoids then
     end))
 end
 
+local weaponShopAssetsCache = nil
 local function isHoldingPrioritizedWeapon(character)
     local tool = character:FindFirstChildOfClass("Tool")
     if not tool then return false end
     
-    local weaponShopAssets = ReplicatedStorage:FindFirstChild("WeaponShopAssets")
-    if not weaponShopAssets then return false end
+    if not weaponShopAssetsCache then
+        weaponShopAssetsCache = ReplicatedStorage:FindFirstChild("WeaponShopAssets")
+    end
+    if not weaponShopAssetsCache then return false end
     
     local folders = {"Pistol", "Rifle", "SMG", "Shotgun"}
     for _, folderName in ipairs(folders) do
-        local folder = weaponShopAssets:FindFirstChild(folderName)
+        local folder = weaponShopAssetsCache:FindFirstChild(folderName)
         if folder and folder:FindFirstChild(tool.Name) then
             return true
         end
@@ -469,22 +500,21 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
     end
 
     local localChar = LocalPlayer.Character
-    if lastRaycastCamera ~= currentCamera or lastRaycastCharacter ~= localChar then
-        lastRaycastCamera = currentCamera
-        lastRaycastCharacter = localChar
-        local filter = {currentCamera}
-        if localChar then
-            t_insert(filter, localChar)
-        end
-        local debrisFolder = Workspace:FindFirstChild("Debris")
-        if debrisFolder then
-            local rayExceptionFolder = debrisFolder:FindFirstChild("RayException")
-            if rayExceptionFolder then
-                t_insert(filter, rayExceptionFolder)
-            end
-        end
-        sharedRaycastParams.FilterDescendantsInstances = filter
+    
+    local filter = {currentCamera}
+    if localChar then
+        t_insert(filter, localChar)
     end
+    local debrisFolder = Workspace:FindFirstChild("Debris")
+    if debrisFolder then
+        local rayExceptionFolder = debrisFolder:FindFirstChild("RayException")
+        if rayExceptionFolder then
+            t_insert(filter, rayExceptionFolder)
+        else
+            t_insert(filter, debrisFolder)
+        end
+    end
+    sharedRaycastParams.FilterDescendantsInstances = filter
     
     local camCFramePos = currentCamera.CFrame.Position
     local potentialTargets = {}
@@ -1047,36 +1077,35 @@ oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
 end))
 
 local oldNamecall
-oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(...)
+oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
     if checkcaller() or (Library and Library.Unloaded) then
-        return oldNamecall(...)
+        return oldNamecall(self, ...)
     end
 
     local args = {...}
-    local self = args[1]
     local Method = getnamecallmethod()
     
     if typeof(self) == "Instance" then
-        if (Method == "GetAttribute" or Method == "getAttribute") then
-            if #args >= 2 and args[2] == "BulletSpread" and Toggles and Toggles.NoSpread and Toggles.NoSpread.Value then
-                local realVal = oldNamecall(...)
+        if Method == "GetAttribute" or Method == "getAttribute" then
+            if args[1] == "BulletSpread" and Toggles and Toggles.NoSpread and Toggles.NoSpread.Value then
+                local realVal = oldNamecall(self, ...)
                 if type(realVal) == "number" then return 0 end
                 if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
                 if typeof(realVal) == "Vector2" then return v2(0, 0) end
                 return 0
             end
-            if #args >= 2 and args[2] == "Recoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
-                local realVal = oldNamecall(...)
+            if args[1] == "Recoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
+                local realVal = oldNamecall(self, ...)
                 if type(realVal) == "number" then return 0 end
                 if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
                 if typeof(realVal) == "Vector2" then return v2(0, 0) end
                 return 0
             end
-        elseif Method == "BindToRenderStep" and #args >= 2 and args[2] == "CameraRecoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
+        elseif Method == "BindToRenderStep" and args[1] == "CameraRecoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
             return
         elseif Method == "Fire" and self.Name == "CameraShake" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
             return
-        elseif Method == "FireServer" and self.Name == "GunEvent" and #args >= 3 and args[2] == "FireShot" and type(args[3]) == "table" then
+        elseif Method == "FireServer" and self.Name == "GunEvent" and args[1] == "FireShot" and type(args[2]) == "table" then
             local tggls = Toggles
             local opts = Options
             if tggls and opts then
@@ -1109,15 +1138,20 @@ oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(...)
                         end
                         
                         if CalculateChance(chance) then
-                            args[3].HitPart = HitPart
-                            args[3].HitPos = HitPos
+                            args[2].HitPart = HitPart
+                            args[2].HitPos = HitPos
+                            if args[2].Origin then
+                                args[2].Direction = (HitPos - args[2].Origin).Unit
+                                args[2].Distance = (HitPos - args[2].Origin).Magnitude
+                            end
+                            args[2].HitNormal = v3(0, 1, 0)
                             overriden = true
                         end
                     end
                 end
                 
                 if not overriden and tggls.NoSpread and tggls.NoSpread.Value then
-                    local origin = args[3].Origin
+                    local origin = args[2].Origin
                     local mouse = LocalPlayer:GetMouse()
                     if origin and mouse then
                         local dir = (mouse.Hit.Position - origin).Unit * 1000
@@ -1125,28 +1159,34 @@ oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(...)
                         
                         local result = Workspace:Raycast(origin, dir, noSpreadRayParams)
                         if result then
-                            args[3].HitPart = result.Instance
-                            args[3].HitPos = result.Position
-                            args[3].HitNormal = result.Normal
+                            args[2].HitPart = result.Instance
+                            args[2].HitPos = result.Position
+                            args[2].HitNormal = result.Normal
                         else
-                            args[3].HitPart = nil
-                            args[3].HitPos = origin + dir
-                            args[3].HitNormal = v3(0, 1, 0)
+                            args[2].HitPart = nil
+                            args[2].HitPos = origin + dir
+                            args[2].HitNormal = v3(0, 1, 0)
                         end
                     end
                 end
                 
                 if setnamecallmethod then setnamecallmethod(Method) end
-                return oldNamecall(table.unpack(args))
+                return oldNamecall(self, table.unpack(args))
             end
         end
     end
     
-    return oldNamecall(...)
+    return oldNamecall(self, ...)
 end))
 
 task.spawn(function()
-    local success, CameraShaker = pcall(require, ReplicatedStorage:WaitForChild("ClientModules", 5):WaitForChild("CameraShaker", 5))
+    local clientModules = ReplicatedStorage:WaitForChild("ClientModules", 5)
+    if not clientModules then return end
+    
+    local cameraShakerModule = clientModules:WaitForChild("CameraShaker", 5)
+    if not cameraShakerModule then return end
+
+    local success, CameraShaker = pcall(require, cameraShakerModule)
     if not success or not CameraShaker then return end
     
     local oldUpdate
@@ -1325,13 +1365,13 @@ t_insert(Connections, RunService.Heartbeat:Connect(function()
         local movementVariables = playerConfig and playerConfig:FindFirstChild("MovementVariables")
         if movementVariables then
             if Toggles.CustomWalkSpeed and Toggles.CustomWalkSpeed.Value then
-                local ws = tonumber(Options.WalkSpeedValue.Value)
+                local ws = Options.WalkSpeedValue.Value
                 if ws and movementVariables:GetAttribute("WalkSpeed") ~= ws then
                     movementVariables:SetAttribute("WalkSpeed", ws)
                 end
             end
             if Toggles.CustomSprintSpeed and Toggles.CustomSprintSpeed.Value then
-                local ss = tonumber(Options.SprintSpeedValue.Value)
+                local ss = Options.SprintSpeedValue.Value
                 if ss and movementVariables:GetAttribute("SprintSpeed") ~= ss then
                     movementVariables:SetAttribute("SprintSpeed", ss)
                 end
