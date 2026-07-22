@@ -22,6 +22,7 @@ local Lighting = game:GetService("Lighting")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local LocalPlayer = Players.LocalPlayer
+local PlayerMouse = LocalPlayer:GetMouse()
 
 local m_huge = math.huge
 local m_random = math.random
@@ -112,8 +113,8 @@ sharedRaycastParams.FilterType = Enum.RaycastFilterType.Exclude
 local noSpreadRayParams = RaycastParams.new()
 noSpreadRayParams.FilterType = Enum.RaycastFilterType.Exclude
 
-local lastRaycastCamera = nil
-local lastRaycastCharacter = nil
+local debrisFolder = Workspace:FindFirstChild("Debris")
+local rayExceptionFolder = debrisFolder and debrisFolder:FindFirstChild("RayException")
 
 local function CalculateChance(Percentage)
     return m_random(1, 100) <= Percentage
@@ -148,7 +149,7 @@ local WeaponGroup = Tabs.Misc:AddRightGroupbox('Weapon')
 local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
 
 SilentAimGroup:AddToggle('SilentAimEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('SilentAimKeybind', { Default = 'NONE', SyncToggleState = true, Mode = 'Toggle', Text = 'Silent Aim' })
-SilentAimGroup:AddToggle('RandomizeBullets', { Text = 'Multi-Bullets', Default = false })
+SilentAimGroup:AddToggle('RandomizeBullets', { Text = 'Multi-Bullets (Shotgun)', Default = false })
 SilentAimGroup:AddSlider('MultiBulletChance', { Text = 'Multi-Bullet Aim Chance', Default = 30, Min = 0, Max = 100, Rounding = 0, Compact = false })
 SilentAimGroup:AddToggle('MultipointEnabled', { Text = 'Multipoint', Default = false })
 SilentAimGroup:AddToggle('PrioritizeArmed', { Text = 'Prioritize Armed', Default = false })
@@ -463,24 +464,34 @@ if scpHumanoids then
 end
 
 local weaponShopAssetsCache = nil
-local function isHoldingPrioritizedWeapon(character)
-    local tool = character:FindFirstChildOfClass("Tool")
-    if not tool then return false end
+local weaponFolderCache = {}
+
+local function getWeaponFolder(tool)
+    if not tool then return nil end
+    if weaponFolderCache[tool.Name] ~= nil then 
+        return weaponFolderCache[tool.Name] or nil 
+    end
     
     if not weaponShopAssetsCache then
         weaponShopAssetsCache = ReplicatedStorage:FindFirstChild("WeaponShopAssets")
     end
-    if not weaponShopAssetsCache then return false end
+    if not weaponShopAssetsCache then return nil end
     
     local folders = {"Pistol", "Rifle", "SMG", "Shotgun"}
     for _, folderName in ipairs(folders) do
         local folder = weaponShopAssetsCache:FindFirstChild(folderName)
         if folder and folder:FindFirstChild(tool.Name) then
-            return true
+            weaponFolderCache[tool.Name] = folderName
+            return folderName
         end
     end
-    
-    return false
+    weaponFolderCache[tool.Name] = false
+    return nil
+end
+
+local function isHoldingPrioritizedWeapon(character)
+    local tool = character:FindFirstChildOfClass("Tool")
+    return getWeaponFolder(tool) ~= nil
 end
 
 local function getClosestCharacterToMouse(mousePos, currentCamera)
@@ -503,16 +514,12 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
     
     local filter = {currentCamera}
     if localChar then
-        t_insert(filter, localChar)
+        filter[#filter + 1] = localChar
     end
-    local debrisFolder = Workspace:FindFirstChild("Debris")
-    if debrisFolder then
-        local rayExceptionFolder = debrisFolder:FindFirstChild("RayException")
-        if rayExceptionFolder then
-            t_insert(filter, rayExceptionFolder)
-        else
-            t_insert(filter, debrisFolder)
-        end
+    if rayExceptionFolder then
+        filter[#filter + 1] = rayExceptionFolder
+    elseif debrisFolder then
+        filter[#filter + 1] = debrisFolder
     end
     sharedRaycastParams.FilterDescendantsInstances = filter
     
@@ -1056,21 +1063,20 @@ oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
     if checkcaller() or (Library and Library.Unloaded) then
         return oldIndex(self, key)
     end
-    if typeof(self) == "Instance" then
-        if key == "Value" then
-            if self.Name == "BulletSpread" and Toggles and Toggles.NoSpread and Toggles.NoSpread.Value then
-                local realVal = oldIndex(self, key)
-                if type(realVal) == "number" then return 0 end
-                if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
-                if typeof(realVal) == "Vector2" then return v2(0, 0) end
-                return 0
-            elseif self.Name == "Recoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
-                local realVal = oldIndex(self, key)
-                if type(realVal) == "number" then return 0 end
-                if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
-                if typeof(realVal) == "Vector2" then return v2(0, 0) end
-                return 0
-            end
+    if type(key) == "string" and key == "Value" and typeof(self) == "Instance" then
+        local name = self.Name
+        if name == "BulletSpread" and Toggles and Toggles.NoSpread and Toggles.NoSpread.Value then
+            local realVal = oldIndex(self, key)
+            if type(realVal) == "number" then return 0 end
+            if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
+            if typeof(realVal) == "Vector2" then return v2(0, 0) end
+            return 0
+        elseif name == "Recoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
+            local realVal = oldIndex(self, key)
+            if type(realVal) == "number" then return 0 end
+            if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
+            if typeof(realVal) == "Vector2" then return v2(0, 0) end
+            return 0
         end
     end
     return oldIndex(self, key)
@@ -1082,96 +1088,108 @@ oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
         return oldNamecall(self, ...)
     end
 
-    local args = {...}
     local Method = getnamecallmethod()
     
     if typeof(self) == "Instance" then
         if Method == "GetAttribute" or Method == "getAttribute" then
-            if args[1] == "BulletSpread" and Toggles and Toggles.NoSpread and Toggles.NoSpread.Value then
+            local arg1 = (...)
+            if arg1 == "BulletSpread" and Toggles and Toggles.NoSpread and Toggles.NoSpread.Value then
                 local realVal = oldNamecall(self, ...)
                 if type(realVal) == "number" then return 0 end
                 if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
                 if typeof(realVal) == "Vector2" then return v2(0, 0) end
                 return 0
             end
-            if args[1] == "Recoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
+            if arg1 == "Recoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
                 local realVal = oldNamecall(self, ...)
                 if type(realVal) == "number" then return 0 end
                 if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
                 if typeof(realVal) == "Vector2" then return v2(0, 0) end
                 return 0
             end
-        elseif Method == "BindToRenderStep" and args[1] == "CameraRecoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
-            return
-        elseif Method == "Fire" and self.Name == "CameraShake" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
-            return
-        elseif Method == "FireServer" and self.Name == "GunEvent" and args[1] == "FireShot" and type(args[2]) == "table" then
-            local tggls = Toggles
-            local opts = Options
-            if tggls and opts then
-                local overriden = false
-                local shouldSilentAim = true
-                if tggls.RandomizeBullets and tggls.RandomizeBullets.Value then
-                    if not CalculateChance(opts.MultiBulletChance.Value) then
-                        shouldSilentAim = false
-                    end
-                end
-
-                if shouldSilentAim then
-                    local currentCamera = Workspace.CurrentCamera
-                    local mousePos = UserInputService:GetMouseLocation()
-                    local _, HitPart, HitPos, isNPC = getClosestCharacterToMouse(mousePos, currentCamera)
+        elseif Method == "BindToRenderStep" then
+            local arg1 = (...)
+            if arg1 == "CameraRecoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
+                return
+            end
+        elseif Method == "Fire" then
+            if self.Name == "CameraShake" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
+                return
+            end
+        elseif Method == "FireServer" and self.Name == "GunEvent" then
+            local arg1, arg2 = ...
+            if arg1 == "FireShot" and type(arg2) == "table" then
+                local tggls = Toggles
+                local opts = Options
+                if tggls and opts then
+                    local overriden = false
+                    local shouldSilentAim = true
                     
-                    if HitPart and HitPos then
-                        local chance = isNPC and opts.NPCHitchance.Value or opts.Hitchance.Value
-                        local bypassDistance = isNPC and opts.NPCCloseRangeBypass.Value or opts.CloseRangeBypass.Value
-                        local playerChar = LocalPlayer.Character
-                        
-                        if playerChar then
-                            local hrp = playerChar:FindFirstChild("HumanoidRootPart")
-                            if hrp then
-                                local distance3D = (hrp.Position - HitPos).Magnitude
-                                if distance3D <= bypassDistance then
-                                    chance = 100
+                    local char = LocalPlayer.Character
+                    local tool = char and char:FindFirstChildOfClass("Tool")
+                    local weaponType = getWeaponFolder(tool)
+
+                    if tggls.RandomizeBullets and tggls.RandomizeBullets.Value and weaponType == "Shotgun" then
+                        if not CalculateChance(opts.MultiBulletChance.Value) then
+                            shouldSilentAim = false
+                        end
+                    end
+
+                    if shouldSilentAim then
+                        local currentCamera = Workspace.CurrentCamera
+                        if currentCamera then
+                            local mousePos = UserInputService:GetMouseLocation()
+                            local _, HitPart, HitPos, isNPC = getClosestCharacterToMouse(mousePos, currentCamera)
+                            
+                            if HitPart and HitPos then
+                                local chance = isNPC and opts.NPCHitchance.Value or opts.Hitchance.Value
+                                local bypassDistance = isNPC and opts.NPCCloseRangeBypass.Value or opts.CloseRangeBypass.Value
+                                
+                                if char then
+                                    local hrp = char:FindFirstChild("HumanoidRootPart")
+                                    if hrp then
+                                        local distance3D = (hrp.Position - HitPos).Magnitude
+                                        if distance3D <= bypassDistance then
+                                            chance = 100
+                                        end
+                                    end
+                                end
+                                
+                                if CalculateChance(chance) then
+                                    arg2.HitPart = HitPart
+                                    arg2.HitPos = HitPos
+                                    if arg2.Origin then
+                                        arg2.Direction = (HitPos - arg2.Origin).Unit
+                                        arg2.Distance = (HitPos - arg2.Origin).Magnitude
+                                    end
+                                    arg2.HitNormal = v3(0, 1, 0)
+                                    overriden = true
                                 end
                             end
                         end
-                        
-                        if CalculateChance(chance) then
-                            args[2].HitPart = HitPart
-                            args[2].HitPos = HitPos
-                            if args[2].Origin then
-                                args[2].Direction = (HitPos - args[2].Origin).Unit
-                                args[2].Distance = (HitPos - args[2].Origin).Magnitude
+                    end
+                    
+                    if not overriden and tggls.NoSpread and tggls.NoSpread.Value then
+                        local origin = arg2.Origin
+                        if origin and PlayerMouse then
+                            local dir = (PlayerMouse.Hit.Position - origin).Unit * 1000
+                            noSpreadRayParams.FilterDescendantsInstances = {LocalPlayer.Character, debrisFolder}
+                            
+                            local result = Workspace:Raycast(origin, dir, noSpreadRayParams)
+                            if result then
+                                arg2.HitPart = result.Instance
+                                arg2.HitPos = result.Position
+                                arg2.HitNormal = result.Normal
+                            else
+                                arg2.HitPart = nil
+                                arg2.HitPos = origin + dir
+                                arg2.HitNormal = v3(0, 1, 0)
                             end
-                            args[2].HitNormal = v3(0, 1, 0)
-                            overriden = true
                         end
                     end
+                    
+                    return oldNamecall(self, ...)
                 end
-                
-                if not overriden and tggls.NoSpread and tggls.NoSpread.Value then
-                    local origin = args[2].Origin
-                    local mouse = LocalPlayer:GetMouse()
-                    if origin and mouse then
-                        local dir = (mouse.Hit.Position - origin).Unit * 1000
-                        noSpreadRayParams.FilterDescendantsInstances = {LocalPlayer.Character, Workspace:FindFirstChild("Debris")}
-                        
-                        local result = Workspace:Raycast(origin, dir, noSpreadRayParams)
-                        if result then
-                            args[2].HitPart = result.Instance
-                            args[2].HitPos = result.Position
-                            args[2].HitNormal = result.Normal
-                        else
-                            args[2].HitPart = nil
-                            args[2].HitPos = origin + dir
-                            args[2].HitNormal = v3(0, 1, 0)
-                        end
-                    end
-                end
-                
-                if setnamecallmethod then setnamecallmethod(Method) end
-                return oldNamecall(self, table.unpack(args))
             end
         end
     end
@@ -1234,14 +1252,15 @@ task.spawn(function()
     if Interactables then
         t_insert(Connections, Interactables.DescendantAdded:Connect(function(descendant)
             if descendant:IsA("ModuleScript") and Toggles and Toggles.InstantInteract and Toggles.InstantInteract.Value then
-                task.wait(0.5)
-                local success, result = pcall(require, descendant)
-                if success and type(result) == "table" and result.HoldDuration then
-                    if not result.OriginalHoldDuration then
-                        result.OriginalHoldDuration = result.HoldDuration
+                task.delay(0.5, function()
+                    local success, result = pcall(require, descendant)
+                    if success and type(result) == "table" and result.HoldDuration then
+                        if not result.OriginalHoldDuration then
+                            result.OriginalHoldDuration = result.HoldDuration
+                        end
+                        result.HoldDuration = 0
                     end
-                    result.HoldDuration = 0
-                end
+                end)
             end
         end))
     end
@@ -1336,6 +1355,9 @@ task.spawn(function()
 end)
 
 local weightBenchDebounce = 0
+local cachedPlayerConfig = nil
+local cachedMovementVariables = nil
+
 t_insert(Connections, RunService.Heartbeat:Connect(function()
     local now = os.clock()
     
@@ -1361,19 +1383,22 @@ t_insert(Connections, RunService.Heartbeat:Connect(function()
     end
     
     if Toggles then
-        local playerConfig = LocalPlayer:FindFirstChild("PlayerConfig")
-        local movementVariables = playerConfig and playerConfig:FindFirstChild("MovementVariables")
-        if movementVariables then
+        if not cachedPlayerConfig or not cachedPlayerConfig.Parent then
+            cachedPlayerConfig = LocalPlayer:FindFirstChild("PlayerConfig")
+            cachedMovementVariables = cachedPlayerConfig and cachedPlayerConfig:FindFirstChild("MovementVariables")
+        end
+        
+        if cachedMovementVariables then
             if Toggles.CustomWalkSpeed and Toggles.CustomWalkSpeed.Value then
                 local ws = Options.WalkSpeedValue.Value
-                if ws and movementVariables:GetAttribute("WalkSpeed") ~= ws then
-                    movementVariables:SetAttribute("WalkSpeed", ws)
+                if ws and cachedMovementVariables:GetAttribute("WalkSpeed") ~= ws then
+                    cachedMovementVariables:SetAttribute("WalkSpeed", ws)
                 end
             end
             if Toggles.CustomSprintSpeed and Toggles.CustomSprintSpeed.Value then
                 local ss = Options.SprintSpeedValue.Value
-                if ss and movementVariables:GetAttribute("SprintSpeed") ~= ss then
-                    movementVariables:SetAttribute("SprintSpeed", ss)
+                if ss and cachedMovementVariables:GetAttribute("SprintSpeed") ~= ss then
+                    cachedMovementVariables:SetAttribute("SprintSpeed", ss)
                 end
             end
         end
