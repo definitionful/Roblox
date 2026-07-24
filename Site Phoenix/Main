@@ -39,7 +39,15 @@ local t_sort = table.sort
 local cf_new = CFrame.new
 local pairs, ipairs, tostring, type, typeof, pcall, setnamecallmethod = pairs, ipairs, tostring, type, typeof, pcall, setnamecallmethod
 
+local BOX_TOP_OFFSET = v3(0, 3.3, 0)
+local BOX_BOTTOM_OFFSET = v3(0, 4.2, 0)
+local HIT_NORMAL = v3(0, 1, 0)
 local VISUAL_EFFECTS = {"PainBlur", "InsanityDOF", "FearCorrection", "InsanityCorrection", "PainCorrection", "PainSootheCorrection", "SCPInfectedVision"}
+local NUM_VISUAL_EFFECTS = #VISUAL_EFFECTS
+
+local sharedEntities = {}
+local sharedPotentialTargets = {}
+local sharedFilter = {}
 
 local drawingPropCache = {}
 local function setDrawingProp(drawing, prop, value)
@@ -512,27 +520,32 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
 
     local localChar = LocalPlayer.Character
     
-    local filter = {currentCamera}
+    table.clear(sharedFilter)
+    sharedFilter[1] = currentCamera
+    local filterIndex = 2
+    
     if localChar then
-        filter[#filter + 1] = localChar
+        sharedFilter[filterIndex] = localChar
+        filterIndex = filterIndex + 1
     end
     if rayExceptionFolder then
-        filter[#filter + 1] = rayExceptionFolder
+        sharedFilter[filterIndex] = rayExceptionFolder
     elseif debrisFolder then
-        filter[#filter + 1] = debrisFolder
+        sharedFilter[filterIndex] = debrisFolder
     end
-    sharedRaycastParams.FilterDescendantsInstances = filter
+    sharedRaycastParams.FilterDescendantsInstances = sharedFilter
     
     local camCFramePos = currentCamera.CFrame.Position
-    local potentialTargets = {}
-    local entities = {}
-
+    
+    table.clear(sharedEntities)
+    table.clear(sharedPotentialTargets)
+    
     if targetPlayers then
         for player, data in pairs(ESPCache) do
             local cached = validateCache(player, data, false)
             if cached and cached.Humanoid and cached.Humanoid.Health > 0 then
                 if teamCheck and player.Team and ignoredTeams[player.Team.Name] then continue end
-                t_insert(entities, {
+                t_insert(sharedEntities, {
                     character = cached.Character,
                     head = cached.Character:FindFirstChild("Head"),
                     hrp = cached.HRP,
@@ -548,7 +561,7 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
             if targetNPCs[npc.Name] then
                 local cached = validateCache(npc, data, true)
                 if cached and cached.Humanoid and cached.Humanoid.Health > 0 then
-                    t_insert(entities, {
+                    t_insert(sharedEntities, {
                         character = cached.Character,
                         head = cached.Character:FindFirstChild("Head"),
                         hrp = cached.HRP,
@@ -560,8 +573,8 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
     end
 
     local now = os.clock()
-    for i = 1, #entities do
-        local entity = entities[i]
+    for i = 1, #sharedEntities do
+        local entity = sharedEntities[i]
         local targetPartName = entity.isNPC and (Options and Options.NPCHitpart and Options.NPCHitpart.Value or "HumanoidRootPart") or (Options and Options.Hitpart and Options.Hitpart.Value or "HumanoidRootPart")
         local targetPart
         
@@ -659,7 +672,7 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
                 local screenPos = currentCamera:WorldToViewportPoint(point)
                 local charPos2D = v2(screenPos.X, screenPos.Y)
                 
-                t_insert(potentialTargets, {
+                t_insert(sharedPotentialTargets, {
                     distanceSq = distSq,
                     pos2D = charPos2D,
                     part = targetPart,
@@ -685,7 +698,7 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
                         isVisible = false
                     end
 
-                    t_insert(potentialTargets, {
+                    t_insert(sharedPotentialTargets, {
                         distanceSq = distSq,
                         pos2D = charPos2D,
                         part = targetPart,
@@ -700,7 +713,7 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
         end
     end
 
-    t_sort(potentialTargets, function(a, b)
+    t_sort(sharedPotentialTargets, function(a, b)
         if a.isVisible and not b.isVisible then return true end
         if not a.isVisible and b.isVisible then return false end
 
@@ -711,8 +724,8 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
         return a.distanceSq < b.distanceSq
     end)
 
-    for i = 1, #potentialTargets do
-        local target = potentialTargets[i]
+    for i = 1, #sharedPotentialTargets do
+        local target = sharedPotentialTargets[i]
         
         if visibleCheck and not target.isVisible then
             continue
@@ -828,8 +841,8 @@ local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
             local isBoxVisible = false
 
             if needsBox then
-                topPos, onScreenTop = currentCamera:WorldToViewportPoint(hrp.Position + v3(0, 3.3, 0))
-                bottomPos, onScreenBottom = currentCamera:WorldToViewportPoint(hrp.Position - v3(0, 4.2, 0))
+                topPos, onScreenTop = currentCamera:WorldToViewportPoint(hrp.Position + BOX_TOP_OFFSET)
+                bottomPos, onScreenBottom = currentCamera:WorldToViewportPoint(hrp.Position - BOX_BOTTOM_OFFSET)
                 isBoxVisible = onScreenTop or onScreenBottom
             end
 
@@ -998,7 +1011,7 @@ t_insert(Connections, RunService.RenderStepped:Connect(function()
     if not (tggls and opts) then return end
 
     if tggls.DisableVisualEffects and tggls.DisableVisualEffects.Value then
-        for i = 1, #VISUAL_EFFECTS do
+        for i = 1, NUM_VISUAL_EFFECTS do
             local effect = Lighting:FindFirstChild(VISUAL_EFFECTS[i])
             if effect and effect.Enabled then
                 effect.Enabled = false
@@ -1063,7 +1076,7 @@ oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
     if checkcaller() or (Library and Library.Unloaded) then
         return oldIndex(self, key)
     end
-    if type(key) == "string" and key == "Value" and typeof(self) == "Instance" then
+    if key == "Value" and typeof(self) == "Instance" then
         local name = self.Name
         if name == "BulletSpread" and Toggles and Toggles.NoSpread and Toggles.NoSpread.Value then
             local realVal = oldIndex(self, key)
@@ -1144,12 +1157,17 @@ oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
                             if HitPart and HitPos then
                                 local chance = isNPC and opts.NPCHitchance.Value or opts.Hitchance.Value
                                 local bypassDistance = isNPC and opts.NPCCloseRangeBypass.Value or opts.CloseRangeBypass.Value
+                                local bypassDistanceSq = bypassDistance * bypassDistance
                                 
                                 if char then
                                     local hrp = char:FindFirstChild("HumanoidRootPart")
                                     if hrp then
-                                        local distance3D = (hrp.Position - HitPos).Magnitude
-                                        if distance3D <= bypassDistance then
+                                        local distanceX = hrp.Position.X - HitPos.X
+                                        local distanceY = hrp.Position.Y - HitPos.Y
+                                        local distanceZ = hrp.Position.Z - HitPos.Z
+                                        local distance3DSq = (distanceX * distanceX) + (distanceY * distanceY) + (distanceZ * distanceZ)
+
+                                        if distance3DSq <= bypassDistanceSq then
                                             chance = 100
                                         end
                                     end
@@ -1162,7 +1180,7 @@ oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
                                         arg2.Direction = (HitPos - arg2.Origin).Unit
                                         arg2.Distance = (HitPos - arg2.Origin).Magnitude
                                     end
-                                    arg2.HitNormal = v3(0, 1, 0)
+                                    arg2.HitNormal = HIT_NORMAL
                                     overriden = true
                                 end
                             end
@@ -1183,7 +1201,7 @@ oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
                             else
                                 arg2.HitPart = nil
                                 arg2.HitPos = origin + dir
-                                arg2.HitNormal = v3(0, 1, 0)
+                                arg2.HitNormal = HIT_NORMAL
                             end
                         end
                     end
