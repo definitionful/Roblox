@@ -2,7 +2,7 @@ if getgenv()._UnloadPreviousInstance then
     pcall(getgenv()._UnloadPreviousInstance)
 end
 
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/refs/heads/main/Library.lua"))()
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/definitionful/Roblox/refs/heads/main/Site%20Phoenix/Library"))()
 local ThemeManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/definitionful/Roblox/refs/heads/main/Site%20Phoenix/ThemeManager"))()
 local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/refs/heads/main/addons/SaveManager.lua"))()
 
@@ -44,10 +44,6 @@ local BOX_BOTTOM_OFFSET = v3(0, 4.2, 0)
 local HIT_NORMAL = v3(0, 1, 0)
 local VISUAL_EFFECTS = {"PainBlur", "InsanityDOF", "FearCorrection", "InsanityCorrection", "PainCorrection", "PainSootheCorrection", "SCPInfectedVision"}
 local NUM_VISUAL_EFFECTS = #VISUAL_EFFECTS
-
-local sharedEntities = {}
-local sharedPotentialTargets = {}
-local sharedFilter = {}
 
 local drawingPropCache = {}
 local function setDrawingProp(drawing, prop, value)
@@ -114,9 +110,6 @@ local OriginalLighting = {
     GlobalShadows = Lighting.GlobalShadows,
     OutdoorAmbient = Lighting.OutdoorAmbient
 }
-
-local sharedRaycastParams = RaycastParams.new()
-sharedRaycastParams.FilterType = Enum.RaycastFilterType.Exclude
 
 local noSpreadRayParams = RaycastParams.new()
 noSpreadRayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -476,8 +469,9 @@ local weaponFolderCache = {}
 
 local function getWeaponFolder(tool)
     if not tool then return nil end
-    if weaponFolderCache[tool.Name] ~= nil then 
-        return weaponFolderCache[tool.Name] or nil 
+    local cached = weaponFolderCache[tool.Name]
+    if cached ~= nil then 
+        return cached == false and nil or cached 
     end
     
     if not weaponShopAssetsCache then
@@ -519,33 +513,31 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
     end
 
     local localChar = LocalPlayer.Character
-    
-    table.clear(sharedFilter)
-    sharedFilter[1] = currentCamera
-    local filterIndex = 2
+    local filterList = {currentCamera}
     
     if localChar then
-        sharedFilter[filterIndex] = localChar
-        filterIndex = filterIndex + 1
+        t_insert(filterList, localChar)
     end
     if rayExceptionFolder then
-        sharedFilter[filterIndex] = rayExceptionFolder
+        t_insert(filterList, rayExceptionFolder)
     elseif debrisFolder then
-        sharedFilter[filterIndex] = debrisFolder
+        t_insert(filterList, debrisFolder)
     end
-    sharedRaycastParams.FilterDescendantsInstances = sharedFilter
+    
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    rayParams.FilterDescendantsInstances = filterList
     
     local camCFramePos = currentCamera.CFrame.Position
-    
-    table.clear(sharedEntities)
-    table.clear(sharedPotentialTargets)
+    local entitiesList = {}
+    local potentialTargetsList = {}
     
     if targetPlayers then
         for player, data in pairs(ESPCache) do
             local cached = validateCache(player, data, false)
             if cached and cached.Humanoid and cached.Humanoid.Health > 0 then
                 if teamCheck and player.Team and ignoredTeams[player.Team.Name] then continue end
-                t_insert(sharedEntities, {
+                t_insert(entitiesList, {
                     character = cached.Character,
                     head = cached.Character:FindFirstChild("Head"),
                     hrp = cached.HRP,
@@ -561,7 +553,7 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
             if targetNPCs[npc.Name] then
                 local cached = validateCache(npc, data, true)
                 if cached and cached.Humanoid and cached.Humanoid.Health > 0 then
-                    t_insert(sharedEntities, {
+                    t_insert(entitiesList, {
                         character = cached.Character,
                         head = cached.Character:FindFirstChild("Head"),
                         hrp = cached.HRP,
@@ -573,8 +565,8 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
     end
 
     local now = os.clock()
-    for i = 1, #sharedEntities do
-        local entity = sharedEntities[i]
+    for i = 1, #entitiesList do
+        local entity = entitiesList[i]
         local targetPartName = entity.isNPC and (Options and Options.NPCHitpart and Options.NPCHitpart.Value or "HumanoidRootPart") or (Options and Options.Hitpart and Options.Hitpart.Value or "HumanoidRootPart")
         local targetPart
         
@@ -645,7 +637,7 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
                     
                     if not fovEnabled or distSq <= fovRadiusSq then
                         local isVisible = true
-                        local raycastResult = Workspace:Raycast(camCFramePos, point - camCFramePos, sharedRaycastParams)
+                        local raycastResult = Workspace:Raycast(camCFramePos, point - camCFramePos, rayParams)
                         if raycastResult and raycastResult.Instance and not raycastResult.Instance:IsDescendantOf(entity.character) then
                             isVisible = false
                         end
@@ -672,7 +664,7 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
                 local screenPos = currentCamera:WorldToViewportPoint(point)
                 local charPos2D = v2(screenPos.X, screenPos.Y)
                 
-                t_insert(sharedPotentialTargets, {
+                t_insert(potentialTargetsList, {
                     distanceSq = distSq,
                     pos2D = charPos2D,
                     part = targetPart,
@@ -693,12 +685,12 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
                 
                 if not fovEnabled or distSq <= fovRadiusSq then
                     local isVisible = true
-                    local raycastResult = Workspace:Raycast(camCFramePos, point - camCFramePos, sharedRaycastParams)
+                    local raycastResult = Workspace:Raycast(camCFramePos, point - camCFramePos, rayParams)
                     if raycastResult and raycastResult.Instance and not raycastResult.Instance:IsDescendantOf(entity.character) then
                         isVisible = false
                     end
 
-                    t_insert(sharedPotentialTargets, {
+                    t_insert(potentialTargetsList, {
                         distanceSq = distSq,
                         pos2D = charPos2D,
                         part = targetPart,
@@ -713,7 +705,7 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
         end
     end
 
-    t_sort(sharedPotentialTargets, function(a, b)
+    t_sort(potentialTargetsList, function(a, b)
         if a.isVisible and not b.isVisible then return true end
         if not a.isVisible and b.isVisible then return false end
 
@@ -724,8 +716,8 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
         return a.distanceSq < b.distanceSq
     end)
 
-    for i = 1, #sharedPotentialTargets do
-        local target = sharedPotentialTargets[i]
+    for i = 1, #potentialTargetsList do
+        local target = potentialTargetsList[i]
         
         if visibleCheck and not target.isVisible then
             continue
@@ -740,11 +732,11 @@ end
 local fullbrightConnection
 local function updateFullbright()
     if Toggles and Toggles.Fullbright and Toggles.Fullbright.Value then
-        Lighting.Brightness = 2
-        Lighting.ClockTime = 14
-        Lighting.FogEnd = 100000
-        Lighting.GlobalShadows = false
-        Lighting.OutdoorAmbient = c3rgb(128, 128, 128)
+        if Lighting.Brightness ~= 2 then Lighting.Brightness = 2 end
+        if Lighting.ClockTime ~= 14 then Lighting.ClockTime = 14 end
+        if Lighting.FogEnd ~= 100000 then Lighting.FogEnd = 100000 end
+        if Lighting.GlobalShadows ~= false then Lighting.GlobalShadows = false end
+        if Lighting.OutdoorAmbient ~= c3rgb(128, 128, 128) then Lighting.OutdoorAmbient = c3rgb(128, 128, 128) end
     end
 end
 
@@ -1083,12 +1075,14 @@ oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
             if type(realVal) == "number" then return 0 end
             if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
             if typeof(realVal) == "Vector2" then return v2(0, 0) end
+            if type(realVal) == "boolean" then return false end
             return 0
         elseif name == "Recoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
             local realVal = oldIndex(self, key)
             if type(realVal) == "number" then return 0 end
             if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
             if typeof(realVal) == "Vector2" then return v2(0, 0) end
+            if type(realVal) == "boolean" then return false end
             return 0
         end
     end
@@ -1097,27 +1091,31 @@ end))
 
 local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+    local Method = getnamecallmethod()
+    
     if checkcaller() or (Library and Library.Unloaded) then
         return oldNamecall(self, ...)
     end
-
-    local Method = getnamecallmethod()
     
     if typeof(self) == "Instance" then
         if Method == "GetAttribute" or Method == "getAttribute" then
             local arg1 = (...)
             if arg1 == "BulletSpread" and Toggles and Toggles.NoSpread and Toggles.NoSpread.Value then
+                setnamecallmethod(Method)
                 local realVal = oldNamecall(self, ...)
                 if type(realVal) == "number" then return 0 end
                 if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
                 if typeof(realVal) == "Vector2" then return v2(0, 0) end
+                if type(realVal) == "boolean" then return false end
                 return 0
             end
             if arg1 == "Recoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
+                setnamecallmethod(Method)
                 local realVal = oldNamecall(self, ...)
                 if type(realVal) == "number" then return 0 end
                 if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
                 if typeof(realVal) == "Vector2" then return v2(0, 0) end
+                if type(realVal) == "boolean" then return false end
                 return 0
             end
         elseif Method == "BindToRenderStep" then
@@ -1191,7 +1189,11 @@ oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
                         local origin = arg2.Origin
                         if origin and PlayerMouse then
                             local dir = (PlayerMouse.Hit.Position - origin).Unit * 1000
-                            noSpreadRayParams.FilterDescendantsInstances = {LocalPlayer.Character, debrisFolder}
+                            
+                            local ignoreList = {}
+                            if LocalPlayer.Character then t_insert(ignoreList, LocalPlayer.Character) end
+                            if debrisFolder then t_insert(ignoreList, debrisFolder) end
+                            noSpreadRayParams.FilterDescendantsInstances = ignoreList
                             
                             local result = Workspace:Raycast(origin, dir, noSpreadRayParams)
                             if result then
@@ -1206,12 +1208,14 @@ oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
                         end
                     end
                     
+                    setnamecallmethod(Method)
                     return oldNamecall(self, ...)
                 end
             end
         end
     end
     
+    setnamecallmethod(Method)
     return oldNamecall(self, ...)
 end))
 
@@ -1391,8 +1395,8 @@ t_insert(Connections, RunService.Heartbeat:Connect(function()
                     local targetY = goal.Position.Y.Scale
                     local currentSliderY = slider.Position.Y.Scale
                     if m_abs(currentSliderY - targetY) <= 0.02 then
-                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, false)
-                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, false)
+                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game)
+                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game)
                         weightBenchDebounce = now
                     end
                 end
