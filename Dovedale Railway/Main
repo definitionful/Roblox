@@ -2,8 +2,8 @@ if getgenv()._UnloadPreviousInstance then
     pcall(getgenv()._UnloadPreviousInstance)
 end
 
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/definitionful/Roblox/refs/heads/main/Site%20Phoenix/Library"))()
-local ThemeManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/definitionful/Roblox/refs/heads/main/Site%20Phoenix/ThemeManager"))()
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/definitionful/Roblox/refs/heads/main/Library"))()
+local ThemeManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/definitionful/Roblox/refs/heads/main/Dovedale%20Railway/ThemeManager"))()
 local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/refs/heads/main/addons/SaveManager.lua"))()
 
 getgenv()._UnloadPreviousInstance = function()
