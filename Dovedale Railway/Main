@@ -1,0 +1,58 @@
+if getgenv()._UnloadPreviousInstance then
+    pcall(getgenv()._UnloadPreviousInstance)
+end
+
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/definitionful/Roblox/refs/heads/main/Site%20Phoenix/Library"))()
+local ThemeManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/definitionful/Roblox/refs/heads/main/Site%20Phoenix/ThemeManager"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/refs/heads/main/addons/SaveManager.lua"))()
+
+getgenv()._UnloadPreviousInstance = function()
+    if Library and not Library.Unloaded then
+        Library:Unload()
+    end
+end
+
+local Connections = {}
+
+local Window = Library:CreateWindow({
+    Title      = 'Dovedale Railway',
+    Center     = true,
+    AutoShow   = true,
+    TabPadding = 8,
+    MenuFadeTime = 0.2
+})
+
+local Tabs = {
+    Settings = Window:AddTab('Settings')
+}
+
+local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
+
+MenuGroup:AddToggle('WatermarkToggle', { Text = 'Watermark', Default = false }):OnChanged(function()
+    Library:SetWatermarkVisibility(Toggles.WatermarkToggle.Value)
+end)
+
+MenuGroup:AddToggle('KeybindsToggle', { Text = 'Keybinds', Default = false }):OnChanged(function()
+    Library.KeybindFrame.Visible = Toggles.KeybindsToggle.Value
+end)
+
+Library:SetWatermark('Dovedale Railway Client')
+Library:SetWatermarkVisibility(false)
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+ThemeManager:SetFolder('DovedaleRailwayConfig')
+SaveManager:SetFolder('DovedaleRailwayConfig')
+SaveManager:IgnoreThemeSettings()
+ThemeManager:ApplyToTab(Tabs.Settings)
+SaveManager:BuildConfigSection(Tabs.Settings)
+
+SaveManager:LoadAutoloadConfig()
+
+Library:OnUnload(function()
+    for _, conn in ipairs(Connections) do
+        conn:Disconnect()
+    end
+
+    Library.Unloaded = true
+end)
