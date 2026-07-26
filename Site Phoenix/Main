@@ -24,24 +24,9 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local PlayerMouse = LocalPlayer:GetMouse()
 
-local m_huge = math.huge
-local m_random = math.random
-local m_floor = math.floor
-local m_clamp = math.clamp
-local m_abs = math.abs
-local v2 = Vector2.new
-local v3 = Vector3.new
-local c3rgb = Color3.fromRGB
-local c3new = Color3.new
-local draw_new = Drawing.new
-local t_insert = table.insert
-local t_sort = table.sort
-local cf_new = CFrame.new
-local pairs, ipairs, tostring, type, typeof, pcall, setnamecallmethod = pairs, ipairs, tostring, type, typeof, pcall, setnamecallmethod
-
-local BOX_TOP_OFFSET = v3(0, 3.3, 0)
-local BOX_BOTTOM_OFFSET = v3(0, 4.2, 0)
-local HIT_NORMAL = v3(0, 1, 0)
+local BOX_TOP_OFFSET = Vector3.new(0, 3.3, 0)
+local BOX_BOTTOM_OFFSET = Vector3.new(0, 4.2, 0)
+local HIT_NORMAL = Vector3.new(0, 1, 0)
 local VISUAL_EFFECTS = {"PainBlur", "InsanityDOF", "FearCorrection", "InsanityCorrection", "PainCorrection", "PainSootheCorrection", "SCPInfectedVision"}
 local NUM_VISUAL_EFFECTS = #VISUAL_EFFECTS
 
@@ -56,7 +41,7 @@ local function setDrawingProp(drawing, prop, value)
     end
 end
 
-local FOVCircle = draw_new("Circle")
+local FOVCircle = Drawing.new("Circle")
 setDrawingProp(FOVCircle, "Visible", false)
 setDrawingProp(FOVCircle, "Thickness", 1)
 setDrawingProp(FOVCircle, "NumSides", 32)
@@ -64,7 +49,7 @@ setDrawingProp(FOVCircle, "Filled", false)
 setDrawingProp(FOVCircle, "Transparency", 1)
 setDrawingProp(FOVCircle, "ZIndex", 2)
 
-local FOVFilledCircle = draw_new("Circle")
+local FOVFilledCircle = Drawing.new("Circle")
 setDrawingProp(FOVFilledCircle, "Visible", false)
 setDrawingProp(FOVFilledCircle, "Thickness", 1)
 setDrawingProp(FOVFilledCircle, "NumSides", 32)
@@ -72,7 +57,7 @@ setDrawingProp(FOVFilledCircle, "Filled", true)
 setDrawingProp(FOVFilledCircle, "Transparency", 1)
 setDrawingProp(FOVFilledCircle, "ZIndex", 1)
 
-local TracerLine = draw_new("Line")
+local TracerLine = Drawing.new("Line")
 setDrawingProp(TracerLine, "Visible", false)
 setDrawingProp(TracerLine, "Thickness", 1)
 setDrawingProp(TracerLine, "ZIndex", 3)
@@ -93,10 +78,10 @@ local R6_BONES = {
 }
 
 local MULTIPOINT_OFFSETS = {
-    v3(0, 0, 0),
-    v3(1, 1, 1), v3(-1, 1, 1), v3(1, -1, 1), v3(-1, -1, 1),
-    v3(1, 1, -1), v3(-1, 1, -1), v3(1, -1, -1), v3(-1, -1, -1),
-    v3(1, 0, 0), v3(-1, 0, 0), v3(0, 1, 0), v3(0, -1, 0)
+    Vector3.new(0, 0, 0),
+    Vector3.new(1, 1, 1), Vector3.new(-1, 1, 1), Vector3.new(1, -1, 1), Vector3.new(-1, -1, 1),
+    Vector3.new(1, 1, -1), Vector3.new(-1, 1, -1), Vector3.new(1, -1, -1), Vector3.new(-1, -1, -1),
+    Vector3.new(1, 0, 0), Vector3.new(-1, 0, 0), Vector3.new(0, 1, 0), Vector3.new(0, -1, 0)
 }
 
 local ESPCache = {}
@@ -111,17 +96,17 @@ local OriginalLighting = {
     OutdoorAmbient = Lighting.OutdoorAmbient
 }
 
-local silentAimRayParams = RaycastParams.new()
-silentAimRayParams.FilterType = Enum.RaycastFilterType.Exclude
-
-local noSpreadRayParams = RaycastParams.new()
-noSpreadRayParams.FilterType = Enum.RaycastFilterType.Exclude
+local sharedRayParams = RaycastParams.new()
+sharedRayParams.FilterType = Enum.RaycastFilterType.Exclude
+local filterList = {}
+local entitiesList = {}
+local potentialTargetsList = {}
 
 local debrisFolder = Workspace:FindFirstChild("Debris")
 local rayExceptionFolder = debrisFolder and debrisFolder:FindFirstChild("RayException")
 
 local function CalculateChance(Percentage)
-    return m_random(1, 100) <= Percentage
+    return math.random(1, 100) <= Percentage
 end
 
 local Window = Library:CreateWindow({
@@ -131,9 +116,6 @@ local Window = Library:CreateWindow({
     TabPadding = 8,
     MenuFadeTime = 0.2
 })
-
-local Toggles = Library.Toggles
-local Options = Library.Options
 
 local Tabs = {
     Combat = Window:AddTab('Combat'),
@@ -150,6 +132,7 @@ local TracerGroup = Tabs.Combat:AddRightGroupbox('Tracer')
 local PlayerESPGroup = Tabs.Visuals:AddLeftGroupbox('Player ESP')
 local WorldGroup = Tabs.Visuals:AddLeftGroupbox('World')
 local NPCESPGroup = Tabs.Visuals:AddRightGroupbox('NPC ESP')
+local ItemESPGroup = Tabs.Visuals:AddRightGroupbox('Loot & Items ESP')
 
 local PlayerGroup = Tabs.Misc:AddLeftGroupbox('Player')
 local WeaponGroup = Tabs.Misc:AddRightGroupbox('Weapon')
@@ -171,9 +154,9 @@ SilentAimGroup:AddToggle('TargetInfected', { Text = 'Target Infected (Bypass Tea
 
 local TeamNames = {}
 for _, team in ipairs(Teams:GetTeams()) do
-    t_insert(TeamNames, team.Name)
+    table.insert(TeamNames, team.Name)
 end
-t_sort(TeamNames)
+table.sort(TeamNames)
 
 SilentAimGroup:AddDropdown('IgnoredTeams', { Values = TeamNames, Default = {}, Multi = true, Text = 'Ignored Teams' })
 
@@ -189,7 +172,7 @@ NPCSilentAimGroup:AddButton('Refresh NPCs', function()
         for _, v in ipairs(scpHumanoids:GetChildren()) do
             if v:IsA("Model") and not seenNPCs[v.Name] then
                 seenNPCs[v.Name] = true
-                t_insert(names, v.Name)
+                table.insert(names, v.Name)
             end
         end
     end
@@ -220,30 +203,29 @@ TracerGroup:AddSlider('TracerThickness', { Text = 'Thickness', Default = 1, Min 
 
 PlayerESPGroup:AddToggle('ESPEnabled', { Text = 'Enable', Default = false })
 PlayerESPGroup:AddToggle('ESPTeamColor', { Text = 'Use Team Color', Default = false })
-PlayerESPGroup:AddToggle('ESPBox', { Text = 'Box', Default = false }):AddColorPicker('BoxColor', { Default = c3rgb(255, 255, 255) })
+PlayerESPGroup:AddToggle('ESPBox', { Text = 'Box', Default = false }):AddColorPicker('BoxColor', { Default = Color3.fromRGB(255, 255, 255) })
 PlayerESPGroup:AddDropdown('ESPBoxType', { Values = { 'Corner', 'Default' }, Default = 2, Multi = false, Text = 'Box Type' })
-PlayerESPGroup:AddToggle('ESPSkeleton', { Text = 'Skeleton', Default = false }):AddColorPicker('SkeletonColor', { Default = c3rgb(0, 255, 120) })
-PlayerESPGroup:AddToggle('ESPName', { Text = 'Name', Default = false }):AddColorPicker('NameColor', { Default = c3rgb(255, 255, 255) })
+PlayerESPGroup:AddToggle('ESPSkeleton', { Text = 'Skeleton', Default = false }):AddColorPicker('SkeletonColor', { Default = Color3.fromRGB(0, 255, 120) })
+PlayerESPGroup:AddToggle('ESPName', { Text = 'Name', Default = false }):AddColorPicker('NameColor', { Default = Color3.fromRGB(255, 255, 255) })
 PlayerESPGroup:AddToggle('ESPDistance', { Text = 'Distance', Default = false })
 PlayerESPGroup:AddToggle('ESPHealth', { Text = 'Health Bar', Default = false })
 PlayerESPGroup:AddToggle('ESPHealthText', { Text = 'Health Text', Default = false })
 PlayerESPGroup:AddToggle('ESPTool', { Text = 'Equipped Tool', Default = false })
 
 NPCESPGroup:AddToggle('NPCESPEnabled', { Text = 'Enable', Default = false })
-NPCESPGroup:AddToggle('NPCESPBox', { Text = 'Box', Default = false }):AddColorPicker('NPCBoxColor', { Default = c3rgb(255, 100, 100) })
+NPCESPGroup:AddToggle('NPCESPBox', { Text = 'Box', Default = false }):AddColorPicker('NPCBoxColor', { Default = Color3.fromRGB(255, 100, 100) })
 NPCESPGroup:AddDropdown('NPCESPBoxType', { Values = { 'Corner', 'Default' }, Default = 2, Multi = false, Text = 'Box Type' })
-NPCESPGroup:AddToggle('NPCESPSkeleton', { Text = 'Skeleton', Default = false }):AddColorPicker('NPCSkeletonColor', { Default = c3rgb(255, 50, 50) })
-NPCESPGroup:AddToggle('NPCESPName', { Text = 'Name', Default = false }):AddColorPicker('NPCNameColor', { Default = c3rgb(255, 150, 150) })
+NPCESPGroup:AddToggle('NPCESPSkeleton', { Text = 'Skeleton', Default = false }):AddColorPicker('NPCSkeletonColor', { Default = Color3.fromRGB(255, 50, 50) })
+NPCESPGroup:AddToggle('NPCESPName', { Text = 'Name', Default = false }):AddColorPicker('NPCNameColor', { Default = Color3.fromRGB(255, 150, 150) })
 NPCESPGroup:AddToggle('NPCESPDistance', { Text = 'Distance', Default = false })
 NPCESPGroup:AddToggle('NPCESPHealth', { Text = 'Health Bar', Default = false })
 NPCESPGroup:AddToggle('NPCESPHealthText', { Text = 'Health Text', Default = false })
 
+ItemESPGroup:AddToggle('SweepTrashESP', { Text = 'Sweep Trash ESP', Default = false }):AddColorPicker('TrashColor', { Default = Color3.fromRGB(150, 150, 150) })
+
 PlayerGroup:AddToggle('DisableVisualEffects', { Text = 'Disable Visual Effects', Default = false })
 PlayerGroup:AddToggle('InstantInteract', { Text = 'Instant Interact', Default = false })
 PlayerGroup:AddToggle('InfiniteStamina', { Text = 'Infinite Stamina', Default = false })
-PlayerGroup:AddToggle('AutoThirst', { Text = 'Auto Thirst', Default = false })
-PlayerGroup:AddToggle('AutoHunger', { Text = 'Auto Hunger', Default = false })
-PlayerGroup:AddToggle('AutoWeightBench', { Text = 'Auto Weight Bench', Default = false })
 PlayerGroup:AddToggle('AntiSCP096', { Text = 'Anti SCP-096', Default = false })
 PlayerGroup:AddToggle('AntiSCP689', { Text = 'Anti SCP-689', Default = false })
 
@@ -276,6 +258,26 @@ Options.SprintSpeedValue:OnChanged(function()
     local stepped = math.floor(Options.SprintSpeedValue.Value * 2 + 0.5) / 2
     if Options.SprintSpeedValue.Value ~= stepped then
         Options.SprintSpeedValue:SetValue(stepped)
+    end
+end)
+
+Toggles.CustomWalkSpeed:OnChanged(function()
+    if not Toggles.CustomWalkSpeed.Value then
+        local pc = LocalPlayer:FindFirstChild("PlayerConfig")
+        local mv = pc and pc:FindFirstChild("MovementVariables")
+        if mv then
+            mv:SetAttribute("WalkSpeed", defaultWalkSpeed)
+        end
+    end
+end)
+
+Toggles.CustomSprintSpeed:OnChanged(function()
+    if not Toggles.CustomSprintSpeed.Value then
+        local pc = LocalPlayer:FindFirstChild("PlayerConfig")
+        local mv = pc and pc:FindFirstChild("MovementVariables")
+        if mv then
+            mv:SetAttribute("SprintSpeed", defaultSprintSpeed)
+        end
     end
 end)
 
@@ -318,7 +320,7 @@ end
 
 local function validateCache(entity, data, isNPC)
     local character = isNPC and entity or entity.Character
-    if not character then
+    if not character or not character.Parent then
         data.CachedParts = nil
         return nil
     end
@@ -362,13 +364,13 @@ local function createESPData(cacheTable, key)
     local data = {
         Skeleton = {},
         CornerBox = {},
-        Box = draw_new("Square"),
-        HealthBarBg = draw_new("Square"),
-        HealthBar = draw_new("Square"),
-        NameTag = draw_new("Text"),
-        DistanceTag = draw_new("Text"),
-        HealthTextTag = draw_new("Text"),
-        ToolTag = draw_new("Text"),
+        Box = Drawing.new("Square"),
+        HealthBarBg = Drawing.new("Square"),
+        HealthBar = Drawing.new("Square"),
+        NameTag = Drawing.new("Text"),
+        DistanceTag = Drawing.new("Text"),
+        HealthTextTag = Drawing.new("Text"),
+        ToolTag = Drawing.new("Text"),
         CachedParts = nil,
         Connections = {}
     }
@@ -377,7 +379,7 @@ local function createESPData(cacheTable, key)
     setDrawingProp(data.Box, "Filled", false)
     setDrawingProp(data.Box, "Visible", false)
 
-    setDrawingProp(data.HealthBarBg, "Color", c3rgb(40, 40, 40))
+    setDrawingProp(data.HealthBarBg, "Color", Color3.fromRGB(40, 40, 40))
     setDrawingProp(data.HealthBarBg, "Filled", true)
     setDrawingProp(data.HealthBarBg, "Thickness", 0)
     setDrawingProp(data.HealthBarBg, "Visible", false)
@@ -407,17 +409,17 @@ local function createESPData(cacheTable, key)
     setDrawingProp(data.ToolTag, "Visible", false)
 
     for i = 1, 14 do
-        local line = draw_new("Line")
+        local line = Drawing.new("Line")
         setDrawingProp(line, "Thickness", 1.5)
         setDrawingProp(line, "Visible", false)
-        t_insert(data.Skeleton, line)
+        table.insert(data.Skeleton, line)
     end
     
     for i = 1, 8 do
-        local line = draw_new("Line")
+        local line = Drawing.new("Line")
         setDrawingProp(line, "Thickness", 1.5)
         setDrawingProp(line, "Visible", false)
-        t_insert(data.CornerBox, line)
+        table.insert(data.CornerBox, line)
     end
 
     cacheTable[key] = data
@@ -458,11 +460,11 @@ for _, player in ipairs(Players:GetPlayers()) do
     if player ~= LocalPlayer then createESPData(ESPCache, player) end
 end
 
-t_insert(Connections, Players.PlayerAdded:Connect(function(player)
+table.insert(Connections, Players.PlayerAdded:Connect(function(player)
     if player ~= LocalPlayer then createESPData(ESPCache, player) end
 end))
 
-t_insert(Connections, Players.PlayerRemoving:Connect(function(player)
+table.insert(Connections, Players.PlayerRemoving:Connect(function(player)
     removeESPData(ESPCache, player)
 end))
 
@@ -470,10 +472,10 @@ if scpHumanoids then
     for _, npc in ipairs(scpHumanoids:GetChildren()) do
         if npc:IsA("Model") then createESPData(NPC_ESPCache, npc) end
     end
-    t_insert(Connections, scpHumanoids.ChildAdded:Connect(function(child)
+    table.insert(Connections, scpHumanoids.ChildAdded:Connect(function(child)
         if child:IsA("Model") then createESPData(NPC_ESPCache, child) end
     end))
-    t_insert(Connections, scpHumanoids.ChildRemoved:Connect(function(child)
+    table.insert(Connections, scpHumanoids.ChildRemoved:Connect(function(child)
         removeESPData(NPC_ESPCache, child)
     end))
 end
@@ -527,22 +529,25 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
     end
 
     local localChar = LocalPlayer.Character
-    local filterList = {currentCamera}
+    
+    table.clear(filterList)
+    table.clear(entitiesList)
+    table.clear(potentialTargetsList)
+
+    table.insert(filterList, currentCamera)
     
     if localChar then
-        t_insert(filterList, localChar)
+        table.insert(filterList, localChar)
     end
     if rayExceptionFolder then
-        t_insert(filterList, rayExceptionFolder)
+        table.insert(filterList, rayExceptionFolder)
     elseif debrisFolder then
-        t_insert(filterList, debrisFolder)
+        table.insert(filterList, debrisFolder)
     end
     
-    silentAimRayParams.FilterDescendantsInstances = filterList
+    sharedRayParams.FilterDescendantsInstances = filterList
     
     local camCFramePos = currentCamera.CFrame.Position
-    local entitiesList = {}
-    local potentialTargetsList = {}
     
     if targetPlayers then
         for player, data in pairs(ESPCache) do
@@ -557,7 +562,7 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
                     end
                 end
                 
-                t_insert(entitiesList, {
+                table.insert(entitiesList, {
                     character = cached.Character,
                     head = cached.Character:FindFirstChild("Head"),
                     hrp = cached.HRP,
@@ -573,7 +578,7 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
             if targetNPCs[npc.Name] then
                 local cached = validateCache(npc, data, true)
                 if cached and cached.Humanoid and cached.Humanoid.Health > 0 then
-                    t_insert(entitiesList, {
+                    table.insert(entitiesList, {
                         character = cached.Character,
                         head = cached.Character:FindFirstChild("Head"),
                         hrp = cached.HRP,
@@ -585,18 +590,12 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
     end
 
     local now = os.clock()
-    local playerTargetPartName = Options and Options.Hitpart and Options.Hitpart.Value or "HumanoidRootPart"
-    local npcTargetPartName = Options and Options.NPCHitpart and Options.NPCHitpart.Value or "HumanoidRootPart"
-    local priorityPartName = Options and Options.PriorityPart and Options.PriorityPart.Value or "Head"
-    local priorityChance = Options and Options.PriorityChance and Options.PriorityChance.Value or 0
-    local isMultipointEnabled = Toggles and Toggles.MultipointEnabled and Toggles.MultipointEnabled.Value
-
     for i = 1, #entitiesList do
         local entity = entitiesList[i]
-        local targetPartName = entity.isNPC and npcTargetPartName or playerTargetPartName
+        local targetPartName = entity.isNPC and (Options and Options.NPCHitpart and Options.NPCHitpart.Value or "HumanoidRootPart") or (Options and Options.Hitpart and Options.Hitpart.Value or "HumanoidRootPart")
         local targetPart
         
-        if not TargetCache[entity.character] then
+        if not TargetCache[entity.character] or not entity.character.Parent then
             TargetCache[entity.character] = { part = nil, lastUpdate = 0 }
         end
         
@@ -604,19 +603,21 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
         
         if now - cache.lastUpdate >= 0.5 or not cache.part or not cache.part.Parent then
             if targetPartName == 'Random' then
+                local priorityPartName = Options and Options.PriorityPart and Options.PriorityPart.Value or "Head"
+                local priorityChance = Options and Options.PriorityChance and Options.PriorityChance.Value or 0
                 local priorityPart = entity.character:FindFirstChild(priorityPartName)
                 
-                if priorityPart and m_random(1, 100) <= priorityChance then
+                if priorityPart and math.random(1, 100) <= priorityChance then
                     cache.part = priorityPart
                 else
                     local parts = {}
                     for _, v in ipairs(entity.character:GetChildren()) do
                         if v:IsA("BasePart") and v.Name ~= "HumanoidRootPart" and v.Name ~= priorityPartName then
-                            t_insert(parts, v)
+                            table.insert(parts, v)
                         end
                     end
                     if #parts > 0 then
-                        cache.part = parts[m_random(1, #parts)]
+                        cache.part = parts[math.random(1, #parts)]
                     elseif priorityPart then
                         cache.part = priorityPart
                     else
@@ -631,7 +632,7 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
         end
         
         targetPart = cache.part
-        if not targetPart then continue end
+        if not targetPart or not targetPart.Parent then continue end
 
         local rootScreenPos, rootOnScreen = currentCamera:WorldToViewportPoint(targetPart.Position)
         if fovEnabled and rootOnScreen then
@@ -641,27 +642,27 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
             end
         end
         
-        if isMultipointEnabled then
+        if Toggles and Toggles.MultipointEnabled and Toggles.MultipointEnabled.Value then
             local size = targetPart.Size * 0.8
             local cf = targetPart.CFrame
             local hx, hy, hz = size.X / 2, size.Y / 2, size.Z / 2
             
             local bestVisibleOffset = nil
-            local bestVisibleDist = m_huge
+            local bestVisibleDist = math.huge
             local bestInvisibleOffset = nil
-            local bestInvisibleDist = m_huge
+            local bestInvisibleDist = math.huge
             
             for _, offset in ipairs(MULTIPOINT_OFFSETS) do
-                local point = (cf * cf_new(hx * offset.X, hy * offset.Y, hz * offset.Z)).Position
+                local point = (cf * CFrame.new(hx * offset.X, hy * offset.Y, hz * offset.Z)).Position
                 local screenPos, onScreen = currentCamera:WorldToViewportPoint(point)
                 
                 if onScreen then
-                    local charPos2D = v2(screenPos.X, screenPos.Y)
+                    local charPos2D = Vector2.new(screenPos.X, screenPos.Y)
                     local distSq = (charPos2D.X - mousePos.X) * (charPos2D.X - mousePos.X) + (charPos2D.Y - mousePos.Y) * (charPos2D.Y - mousePos.Y)
                     
                     if not fovEnabled or distSq <= fovRadiusSq then
                         local isVisible = true
-                        local raycastResult = Workspace:Raycast(camCFramePos, point - camCFramePos, silentAimRayParams)
+                        local raycastResult = Workspace:Raycast(camCFramePos, point - camCFramePos, sharedRayParams)
                         if raycastResult and raycastResult.Instance and not raycastResult.Instance:IsDescendantOf(entity.character) then
                             isVisible = false
                         end
@@ -684,11 +685,11 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
             local finalOffset = bestVisibleOffset or bestInvisibleOffset
             if finalOffset then
                 local distSq = bestVisibleOffset and bestVisibleDist or bestInvisibleDist
-                local point = (cf * cf_new(hx * finalOffset.X, hy * finalOffset.Y, hz * finalOffset.Z)).Position
+                local point = (cf * CFrame.new(hx * finalOffset.X, hy * finalOffset.Y, hz * finalOffset.Z)).Position
                 local screenPos = currentCamera:WorldToViewportPoint(point)
-                local charPos2D = v2(screenPos.X, screenPos.Y)
+                local charPos2D = Vector2.new(screenPos.X, screenPos.Y)
                 
-                t_insert(potentialTargetsList, {
+                table.insert(potentialTargetsList, {
                     distanceSq = distSq,
                     pos2D = charPos2D,
                     part = targetPart,
@@ -704,17 +705,17 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
             local screenPos, onScreen = currentCamera:WorldToViewportPoint(point)
             
             if onScreen then
-                local charPos2D = v2(screenPos.X, screenPos.Y)
+                local charPos2D = Vector2.new(screenPos.X, screenPos.Y)
                 local distSq = (charPos2D.X - mousePos.X) * (charPos2D.X - mousePos.X) + (charPos2D.Y - mousePos.Y) * (charPos2D.Y - mousePos.Y)
                 
                 if not fovEnabled or distSq <= fovRadiusSq then
                     local isVisible = true
-                    local raycastResult = Workspace:Raycast(camCFramePos, point - camCFramePos, silentAimRayParams)
+                    local raycastResult = Workspace:Raycast(camCFramePos, point - camCFramePos, sharedRayParams)
                     if raycastResult and raycastResult.Instance and not raycastResult.Instance:IsDescendantOf(entity.character) then
                         isVisible = false
                     end
 
-                    t_insert(potentialTargetsList, {
+                    table.insert(potentialTargetsList, {
                         distanceSq = distSq,
                         pos2D = charPos2D,
                         part = targetPart,
@@ -729,7 +730,7 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
         end
     end
 
-    t_sort(potentialTargetsList, function(a, b)
+    table.sort(potentialTargetsList, function(a, b)
         if a.isVisible and not b.isVisible then return true end
         if not a.isVisible and b.isVisible then return false end
 
@@ -760,7 +761,7 @@ local function updateFullbright()
         if Lighting.ClockTime ~= 14 then Lighting.ClockTime = 14 end
         if Lighting.FogEnd ~= 100000 then Lighting.FogEnd = 100000 end
         if Lighting.GlobalShadows ~= false then Lighting.GlobalShadows = false end
-        if Lighting.OutdoorAmbient ~= c3rgb(128, 128, 128) then Lighting.OutdoorAmbient = c3rgb(128, 128, 128) end
+        if Lighting.OutdoorAmbient ~= Color3.fromRGB(128, 128, 128) then Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128) end
     end
 end
 
@@ -790,40 +791,42 @@ WorldGroup:AddToggle('Fullbright', { Text = 'Fullbright', Default = false }):OnC
 end)
 
 local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
-    if not (Toggles and Options) then return end
+    local tggls = Toggles
+    local opts = Options
+    if not (tggls and opts) then return end
 
     local espEnabled, boxEnabled, skeletonEnabled, nameEnabled, distanceEnabled, healthEnabled, healthTextEnabled
     local boxColorVal, nameColorVal, skelColorVal, boxTypeVal
     
-    local teamColorEnabled = not isNPC and Toggles.ESPTeamColor.Value
-    local toolEnabled = not isNPC and Toggles.ESPTool.Value
+    local teamColorEnabled = not isNPC and tggls.ESPTeamColor.Value
+    local toolEnabled = not isNPC and tggls.ESPTool.Value
 
     if isNPC then
-        espEnabled = Toggles.NPCESPEnabled.Value
-        boxEnabled = Toggles.NPCESPBox.Value
-        skeletonEnabled = Toggles.NPCESPSkeleton.Value
-        nameEnabled = Toggles.NPCESPName.Value
-        distanceEnabled = Toggles.NPCESPDistance.Value
-        healthEnabled = Toggles.NPCESPHealth.Value
-        healthTextEnabled = Toggles.NPCESPHealthText.Value
+        espEnabled = tggls.NPCESPEnabled.Value
+        boxEnabled = tggls.NPCESPBox.Value
+        skeletonEnabled = tggls.NPCESPSkeleton.Value
+        nameEnabled = tggls.NPCESPName.Value
+        distanceEnabled = tggls.NPCESPDistance.Value
+        healthEnabled = tggls.NPCESPHealth.Value
+        healthTextEnabled = tggls.NPCESPHealthText.Value
         
-        boxColorVal = Options.NPCBoxColor.Value
-        nameColorVal = Options.NPCNameColor.Value
-        skelColorVal = Options.NPCSkeletonColor.Value
-        boxTypeVal = Options.NPCESPBoxType.Value
+        boxColorVal = opts.NPCBoxColor.Value
+        nameColorVal = opts.NPCNameColor.Value
+        skelColorVal = opts.NPCSkeletonColor.Value
+        boxTypeVal = opts.NPCESPBoxType.Value
     else
-        espEnabled = Toggles.ESPEnabled.Value
-        boxEnabled = Toggles.ESPBox.Value
-        skeletonEnabled = Toggles.ESPSkeleton.Value
-        nameEnabled = Toggles.ESPName.Value
-        distanceEnabled = Toggles.ESPDistance.Value
-        healthEnabled = Toggles.ESPHealth.Value
-        healthTextEnabled = Toggles.ESPHealthText.Value
+        espEnabled = tggls.ESPEnabled.Value
+        boxEnabled = tggls.ESPBox.Value
+        skeletonEnabled = tggls.ESPSkeleton.Value
+        nameEnabled = tggls.ESPName.Value
+        distanceEnabled = tggls.ESPDistance.Value
+        healthEnabled = tggls.ESPHealth.Value
+        healthTextEnabled = tggls.ESPHealthText.Value
         
-        boxColorVal = Options.BoxColor.Value
-        nameColorVal = Options.NameColor.Value
-        skelColorVal = Options.SkeletonColor.Value
-        boxTypeVal = Options.ESPBoxType.Value
+        boxColorVal = opts.BoxColor.Value
+        nameColorVal = opts.NameColor.Value
+        skelColorVal = opts.SkeletonColor.Value
+        boxTypeVal = opts.ESPBoxType.Value
     end
 
     if not espEnabled then
@@ -841,15 +844,15 @@ local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
             local character = cached.Character
 
             local hasTeamColor = false
-            local espColor = c3new(1, 1, 1)
+            local espColor = Color3.new(1, 1, 1)
             if teamColorEnabled and entity.Team then
                 espColor = entity.TeamColor.Color
                 hasTeamColor = true
             end
 
-            local currentBoxColor = hasTeamColor and espColor or boxColorVal
-            local currentNameColor = hasTeamColor and espColor or nameColorVal
-            local currentSkeletonColor = hasTeamColor and espColor or skelColorVal
+            local currentBoxColor = hasTeamColor and espColor or (boxColorVal or espColor)
+            local currentNameColor = hasTeamColor and espColor or (nameColorVal or espColor)
+            local currentSkeletonColor = hasTeamColor and espColor or (skelColorVal or espColor)
 
             local topPos, bottomPos, onScreenTop, onScreenBottom
             local isBoxVisible = false
@@ -861,7 +864,7 @@ local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
             end
 
             if isBoxVisible then
-                local boxHeight = m_abs(topPos.Y - bottomPos.Y)
+                local boxHeight = math.abs(topPos.Y - bottomPos.Y)
                 local boxWidth = boxHeight * 0.625
                 local boxX = topPos.X - (boxWidth / 2)
                 local boxY = topPos.Y
@@ -872,25 +875,25 @@ local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
                         local lineW = boxWidth / 3
                         local lineH = boxHeight / 4
                         
-                        data.CornerBox[1].From = v2(boxX, boxY)
-                        data.CornerBox[1].To = v2(boxX + lineW, boxY)
-                        data.CornerBox[2].From = v2(boxX, boxY)
-                        data.CornerBox[2].To = v2(boxX, boxY + lineH)
+                        data.CornerBox[1].From = Vector2.new(boxX, boxY)
+                        data.CornerBox[1].To = Vector2.new(boxX + lineW, boxY)
+                        data.CornerBox[2].From = Vector2.new(boxX, boxY)
+                        data.CornerBox[2].To = Vector2.new(boxX, boxY + lineH)
                         
-                        data.CornerBox[3].From = v2(boxX + boxWidth, boxY)
-                        data.CornerBox[3].To = v2(boxX + boxWidth - lineW, boxY)
-                        data.CornerBox[4].From = v2(boxX + boxWidth, boxY)
-                        data.CornerBox[4].To = v2(boxX + boxWidth, boxY + lineH)
+                        data.CornerBox[3].From = Vector2.new(boxX + boxWidth, boxY)
+                        data.CornerBox[3].To = Vector2.new(boxX + boxWidth - lineW, boxY)
+                        data.CornerBox[4].From = Vector2.new(boxX + boxWidth, boxY)
+                        data.CornerBox[4].To = Vector2.new(boxX + boxWidth, boxY + lineH)
                         
-                        data.CornerBox[5].From = v2(boxX, boxY + boxHeight)
-                        data.CornerBox[5].To = v2(boxX + lineW, boxY + boxHeight)
-                        data.CornerBox[6].From = v2(boxX, boxY + boxHeight)
-                        data.CornerBox[6].To = v2(boxX, boxY + boxHeight - lineH)
+                        data.CornerBox[5].From = Vector2.new(boxX, boxY + boxHeight)
+                        data.CornerBox[5].To = Vector2.new(boxX + lineW, boxY + boxHeight)
+                        data.CornerBox[6].From = Vector2.new(boxX, boxY + boxHeight)
+                        data.CornerBox[6].To = Vector2.new(boxX, boxY + boxHeight - lineH)
                         
-                        data.CornerBox[7].From = v2(boxX + boxWidth, boxY + boxHeight)
-                        data.CornerBox[7].To = v2(boxX + boxWidth - lineW, boxY + boxHeight)
-                        data.CornerBox[8].From = v2(boxX + boxWidth, boxY + boxHeight)
-                        data.CornerBox[8].To = v2(boxX + boxWidth, boxY + boxHeight - lineH)
+                        data.CornerBox[7].From = Vector2.new(boxX + boxWidth, boxY + boxHeight)
+                        data.CornerBox[7].To = Vector2.new(boxX + boxWidth - lineW, boxY + boxHeight)
+                        data.CornerBox[8].From = Vector2.new(boxX + boxWidth, boxY + boxHeight)
+                        data.CornerBox[8].To = Vector2.new(boxX + boxWidth, boxY + boxHeight - lineH)
                         
                         for i = 1, 8 do
                             setDrawingProp(data.CornerBox[i], "Color", currentBoxColor)
@@ -898,8 +901,8 @@ local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
                         end
                     else
                         for i = 1, 8 do setDrawingProp(data.CornerBox[i], "Visible", false) end
-                        setDrawingProp(data.Box, "Position", v2(boxX, boxY))
-                        setDrawingProp(data.Box, "Size", v2(boxWidth, boxHeight))
+                        setDrawingProp(data.Box, "Position", Vector2.new(boxX, boxY))
+                        setDrawingProp(data.Box, "Size", Vector2.new(boxWidth, boxHeight))
                         setDrawingProp(data.Box, "Color", currentBoxColor)
                         setDrawingProp(data.Box, "Visible", true)
                     end
@@ -910,7 +913,7 @@ local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
 
                 if nameEnabled then
                     setDrawingProp(data.NameTag, "Text", character.Name)
-                    setDrawingProp(data.NameTag, "Position", v2(topPos.X, boxY - 16))
+                    setDrawingProp(data.NameTag, "Position", Vector2.new(topPos.X, boxY - 16))
                     setDrawingProp(data.NameTag, "Color", currentNameColor)
                     setDrawingProp(data.NameTag, "Visible", true)
                 else
@@ -920,9 +923,9 @@ local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
                 local yOffset = bottomPos.Y + 2
                 
                 if distanceEnabled then
-                    local distance = m_floor((camPos - hrp.Position).Magnitude)
+                    local distance = math.floor((camPos - hrp.Position).Magnitude)
                     setDrawingProp(data.DistanceTag, "Text", tostring(distance) .. "m")
-                    setDrawingProp(data.DistanceTag, "Position", v2(topPos.X, yOffset))
+                    setDrawingProp(data.DistanceTag, "Position", Vector2.new(topPos.X, yOffset))
                     setDrawingProp(data.DistanceTag, "Color", currentNameColor)
                     setDrawingProp(data.DistanceTag, "Visible", true)
                     yOffset = yOffset + 14
@@ -933,27 +936,27 @@ local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
                 if toolEnabled then
                     local tool = character:FindFirstChildOfClass("Tool")
                     setDrawingProp(data.ToolTag, "Text", tool and tool.Name or "None")
-                    setDrawingProp(data.ToolTag, "Position", v2(topPos.X, yOffset))
+                    setDrawingProp(data.ToolTag, "Position", Vector2.new(topPos.X, yOffset))
                     setDrawingProp(data.ToolTag, "Color", currentNameColor)
                     setDrawingProp(data.ToolTag, "Visible", true)
                 else
                     setDrawingProp(data.ToolTag, "Visible", false)
                 end
 
-                local healthPercent = m_clamp(humanoid.Health / (humanoid.MaxHealth > 0 and humanoid.MaxHealth or 100), 0, 1)
+                local healthPercent = math.clamp(humanoid.Health / (humanoid.MaxHealth > 0 and humanoid.MaxHealth or 100), 0, 1)
                 local barWidth = 3
                 local barOffset = 5
                 local barX = boxX - barOffset - barWidth
                 local healthHeight = boxHeight * healthPercent
-                local healthColor = c3rgb(255, 0, 0):Lerp(c3rgb(0, 255, 0), healthPercent)
+                local healthColor = Color3.fromRGB(255, 0, 0):Lerp(Color3.fromRGB(0, 255, 0), healthPercent)
 
                 if healthEnabled then
-                    setDrawingProp(data.HealthBarBg, "Position", v2(barX, boxY))
-                    setDrawingProp(data.HealthBarBg, "Size", v2(barWidth, boxHeight))
+                    setDrawingProp(data.HealthBarBg, "Position", Vector2.new(barX, boxY))
+                    setDrawingProp(data.HealthBarBg, "Size", Vector2.new(barWidth, boxHeight))
                     setDrawingProp(data.HealthBarBg, "Visible", true)
 
-                    setDrawingProp(data.HealthBar, "Position", v2(barX, boxY + (boxHeight - healthHeight)))
-                    setDrawingProp(data.HealthBar, "Size", v2(barWidth, healthHeight))
+                    setDrawingProp(data.HealthBar, "Position", Vector2.new(barX, boxY + (boxHeight - healthHeight)))
+                    setDrawingProp(data.HealthBar, "Size", Vector2.new(barWidth, healthHeight))
                     setDrawingProp(data.HealthBar, "Color", healthColor)
                     setDrawingProp(data.HealthBar, "Visible", true)
                 else
@@ -962,8 +965,8 @@ local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
                 end
                 
                 if healthTextEnabled then
-                    setDrawingProp(data.HealthTextTag, "Text", tostring(m_floor(humanoid.Health)) .. " HP")
-                    setDrawingProp(data.HealthTextTag, "Position", v2(barX - 18, boxY + (boxHeight - healthHeight) - 6))
+                    setDrawingProp(data.HealthTextTag, "Text", tostring(math.floor(humanoid.Health)) .. " HP")
+                    setDrawingProp(data.HealthTextTag, "Position", Vector2.new(barX - 18, boxY + (boxHeight - healthHeight) - 6))
                     setDrawingProp(data.HealthTextTag, "Color", healthColor)
                     setDrawingProp(data.HealthTextTag, "Visible", true)
                 else
@@ -991,8 +994,8 @@ local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
                             local posB, onScreenB = currentCamera:WorldToViewportPoint(partB.Position)
 
                             if onScreenA and onScreenB then
-                                line.From = v2(posA.X, posA.Y)
-                                line.To = v2(posB.X, posB.Y)
+                                line.From = Vector2.new(posA.X, posA.Y)
+                                line.To = Vector2.new(posB.X, posB.Y)
                                 setDrawingProp(line, "Color", currentSkeletonColor)
                                 setDrawingProp(line, "Visible", true)
                             else
@@ -1014,31 +1017,117 @@ local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
     end
 end
 
-t_insert(Connections, RunService.RenderStepped:Connect(function()
-    local currentCamera = Workspace.CurrentCamera
-    if not currentCamera then return end
-    
-    local mousePos = UserInputService:GetMouseLocation()
+local ItemESPCache = {}
 
-    if not (Toggles and Options) then return end
+local function getOrCreateItemESP(instance)
+    if not ItemESPCache[instance] then
+        local text = Drawing.new("Text")
+        text.Size = 13
+        text.Center = true
+        text.Outline = true
+        text.Visible = false
+        text.ZIndex = 2
+        ItemESPCache[instance] = text
+    end
+    return ItemESPCache[instance]
+end
 
-    if Toggles.DisableVisualEffects and Toggles.DisableVisualEffects.Value then
-        for i = 1, NUM_VISUAL_EFFECTS do
-            local effect = Lighting:FindFirstChild(VISUAL_EFFECTS[i])
-            if effect and effect.Enabled then
-                effect.Enabled = false
+local function updateItemESP(currentCamera)
+    local tggls = Toggles
+    local opts = Options
+    if not (tggls and opts) then return end
+
+    local trashEnabled = tggls.SweepTrashESP.Value
+    local processedInstances = {}
+
+    if trashEnabled then
+        local interactable = Workspace:FindFirstChild("Interactable")
+        local sweepTrashFolder = interactable and interactable:FindFirstChild("SweepTrash")
+        
+        if sweepTrashFolder then
+            for _, trash in ipairs(sweepTrashFolder:GetChildren()) do
+                local skip = false
+                
+                if trash.Name == "TrashPile" then
+                    local decal = trash:FindFirstChildWhichIsA("Decal")
+                    if decal and decal.Transparency >= 1 then
+                        skip = true
+                    end
+                end
+                
+                if not skip then
+                    local part = trash:IsA("BasePart") and trash or trash.PrimaryPart or trash:FindFirstChildWhichIsA("BasePart")
+                    if part then
+                        processedInstances[trash] = { 
+                            part = part, 
+                            name = "Sweep Trash", 
+                            color = opts.TrashColor.Value 
+                        }
+                    end
+                end
             end
         end
     end
 
-    local fovEnabled = Toggles.FOVEnabled.Value
-    local tracerEnabled = Toggles.TracerEnabled.Value
+    for instance, data in pairs(processedInstances) do
+        local textESP = getOrCreateItemESP(instance)
+        local pos, onScreen = currentCamera:WorldToViewportPoint(data.part.Position)
+        
+        if onScreen then
+            textESP.Text = data.name
+            textESP.Position = Vector2.new(pos.X, pos.Y)
+            textESP.Color = data.color
+            textESP.Visible = true
+        else
+            textESP.Visible = false
+        end
+    end
+
+    for instance, drawing in pairs(ItemESPCache) do
+        if not processedInstances[instance] or not instance.Parent then
+            drawing:Remove()
+            ItemESPCache[instance] = nil
+        end
+    end
+end
+
+local activeVisualEffects = {}
+
+table.insert(Connections, RunService.RenderStepped:Connect(function()
+    local currentCamera = Workspace.CurrentCamera
+    if not currentCamera then return end
+    
+    local mousePos = UserInputService:GetMouseLocation()
+    local tggls = Toggles
+    local opts = Options
+
+    if not (tggls and opts) then return end
+
+    if tggls.DisableVisualEffects and tggls.DisableVisualEffects.Value then
+        for i = 1, NUM_VISUAL_EFFECTS do
+            local effect = Lighting:FindFirstChild(VISUAL_EFFECTS[i])
+            if effect and effect.Enabled then
+                activeVisualEffects[effect] = true
+                effect.Enabled = false
+            end
+        end
+    else
+        for effect, _ in pairs(activeVisualEffects) do
+            if effect and effect.Parent then
+                effect.Enabled = true
+            end
+        end
+        table.clear(activeVisualEffects)
+    end
+
+    local fovEnabled = tggls.FOVEnabled.Value
+    local tracerEnabled = tggls.TracerEnabled.Value
     
     if fovEnabled then
-        local outlineEnabled = Toggles.FOVOutline.Value
-        local filledEnabled = Toggles.FOVFilled.Value
-        local fovRadius = Options.FOVRadius.Value
-        local fovNumSides = Options.FOVNumSides.Value
+        local outlineEnabled = tggls.FOVOutline.Value
+        local filledEnabled = tggls.FOVFilled.Value
+        local fovRadius = opts.FOVRadius.Value
+        local fovNumSides = opts.FOVNumSides.Value
 
         setDrawingProp(FOVCircle, "Visible", outlineEnabled)
         setDrawingProp(FOVFilledCircle, "Visible", filledEnabled)
@@ -1046,17 +1135,17 @@ t_insert(Connections, RunService.RenderStepped:Connect(function()
         if outlineEnabled then
             setDrawingProp(FOVCircle, "Position", mousePos)
             setDrawingProp(FOVCircle, "Radius", fovRadius)
-            setDrawingProp(FOVCircle, "Thickness", Options.FOVThickness.Value)
+            setDrawingProp(FOVCircle, "Thickness", opts.FOVThickness.Value)
             setDrawingProp(FOVCircle, "NumSides", fovNumSides)
-            setDrawingProp(FOVCircle, "Color", Options.FOVOutlineColor.Value)
+            setDrawingProp(FOVCircle, "Color", opts.FOVOutlineColor.Value)
         end
 
         if filledEnabled then
             setDrawingProp(FOVFilledCircle, "Position", mousePos)
             setDrawingProp(FOVFilledCircle, "Radius", fovRadius)
             setDrawingProp(FOVFilledCircle, "NumSides", fovNumSides)
-            setDrawingProp(FOVFilledCircle, "Color", Options.FOVFilledColor.Value)
-            setDrawingProp(FOVFilledCircle, "Transparency", Options.FOVFilledTransparency.Value)
+            setDrawingProp(FOVFilledCircle, "Color", opts.FOVFilledColor.Value)
+            setDrawingProp(FOVFilledCircle, "Transparency", opts.FOVFilledTransparency.Value)
         end
     else
         setDrawingProp(FOVCircle, "Visible", false)
@@ -1069,8 +1158,8 @@ t_insert(Connections, RunService.RenderStepped:Connect(function()
             setDrawingProp(TracerLine, "Visible", true)
             setDrawingProp(TracerLine, "From", mousePos)
             setDrawingProp(TracerLine, "To", targetPos)
-            setDrawingProp(TracerLine, "Color", Options.TracerColor.Value)
-            setDrawingProp(TracerLine, "Thickness", Options.TracerThickness.Value)
+            setDrawingProp(TracerLine, "Color", opts.TracerColor.Value)
+            setDrawingProp(TracerLine, "Thickness", opts.TracerThickness.Value)
         else
             setDrawingProp(TracerLine, "Visible", false)
         end
@@ -1081,6 +1170,7 @@ t_insert(Connections, RunService.RenderStepped:Connect(function()
     local camPos = currentCamera.CFrame.Position
     updateVisualsForCache(ESPCache, currentCamera, camPos, false)
     updateVisualsForCache(NPC_ESPCache, currentCamera, camPos, true)
+    updateItemESP(currentCamera)
 end))
 
 local oldIndex
@@ -1088,20 +1178,21 @@ oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
     if checkcaller() or (Library and Library.Unloaded) then
         return oldIndex(self, key)
     end
-    if typeof(self) == "Instance" and key == "Value" then
+    local keyStr = tostring(key)
+    if keyStr == "Value" and typeof(self) == "Instance" then
         local name = self.Name
         if name == "BulletSpread" and Toggles and Toggles.NoSpread and Toggles.NoSpread.Value then
             local realVal = oldIndex(self, key)
             if type(realVal) == "number" then return 0 end
-            if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
-            if typeof(realVal) == "Vector2" then return v2(0, 0) end
+            if typeof(realVal) == "Vector3" then return Vector3.new(0, 0, 0) end
+            if typeof(realVal) == "Vector2" then return Vector2.new(0, 0) end
             if type(realVal) == "boolean" then return false end
             return 0
         elseif name == "Recoil" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
             local realVal = oldIndex(self, key)
             if type(realVal) == "number" then return 0 end
-            if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
-            if typeof(realVal) == "Vector2" then return v2(0, 0) end
+            if typeof(realVal) == "Vector3" then return Vector3.new(0, 0, 0) end
+            if typeof(realVal) == "Vector2" then return Vector2.new(0, 0) end
             if type(realVal) == "boolean" then return false end
             return 0
         end
@@ -1111,30 +1202,118 @@ end))
 
 local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-    local Method = getnamecallmethod()
+    local Method = tostring(getnamecallmethod())
     
     if checkcaller() or (Library and Library.Unloaded) then
         return oldNamecall(self, ...)
     end
 
     if typeof(self) == "Instance" then
-        if Method == "FireServer" and self.Name == "SCP689Main" then
-            local args = {...}
-            if args[1] == "Seen" then
-                if Toggles and Toggles.AntiSCP689 and Toggles.AntiSCP689.Value then
-                    return nil
+        local name = self.Name
+        if Method == "FireServer" then
+            if name == "SCP689Main" then
+                local args = {...}
+                if type(args) == "table" and #args > 0 and args[1] == "Seen" then
+                    if Toggles and Toggles.AntiSCP689 and Toggles.AntiSCP689.Value then
+                        return nil
+                    end
+                end
+            elseif name == "GunEvent" then
+                local arg1, arg2 = ...
+                if arg1 == "FireShot" and type(arg2) == "table" then
+                    local tggls = Toggles
+                    local opts = Options
+                    if tggls and opts then
+                        local overriden = false
+                        local shouldSilentAim = true
+                        
+                        local char = LocalPlayer.Character
+                        local tool = char and char:FindFirstChildOfClass("Tool")
+                        local weaponType = getWeaponFolder(tool)
+
+                        if tggls.RandomizeBullets and tggls.RandomizeBullets.Value and weaponType == "Shotgun" then
+                            if not CalculateChance(opts.MultiBulletChance.Value) then
+                                shouldSilentAim = false
+                            end
+                        end
+
+                        if shouldSilentAim then
+                            local currentCamera = Workspace.CurrentCamera
+                            if currentCamera then
+                                local mousePos = UserInputService:GetMouseLocation()
+                                local _, HitPart, HitPos, isNPC = getClosestCharacterToMouse(mousePos, currentCamera)
+
+                                if HitPart and HitPos then
+                                    local chance = isNPC and opts.NPCHitchance.Value or opts.Hitchance.Value
+                                    local bypassDistance = isNPC and opts.NPCCloseRangeBypass.Value or opts.CloseRangeBypass.Value
+                                    local bypassDistanceSq = bypassDistance * bypassDistance
+                                    
+                                    if char then
+                                        local hrp = char:FindFirstChild("HumanoidRootPart")
+                                        if hrp then
+                                            local distanceX = hrp.Position.X - HitPos.X
+                                            local distanceY = hrp.Position.Y - HitPos.Y
+                                            local distanceZ = hrp.Position.Z - HitPos.Z
+                                            local distance3DSq = (distanceX * distanceX) + (distanceY * distanceY) + (distanceZ * distanceZ)
+
+                                            if distance3DSq <= bypassDistanceSq then
+                                                chance = 100
+                                            end
+                                        end
+                                    end
+                            
+                                    if CalculateChance(chance) then
+                                        arg2.HitPart = HitPart
+                                        arg2.HitPos = HitPos
+                                        if arg2.Origin then
+                                            arg2.Direction = (HitPos - arg2.Origin).Unit
+                                            arg2.Distance = (HitPos - arg2.Origin).Magnitude
+                                        end
+                                        arg2.HitNormal = HIT_NORMAL
+                                        overriden = true
+                                    end
+                                end
+                            end
+                        end
+                        
+                        if not overriden and tggls.NoSpread and tggls.NoSpread.Value then
+                            local origin = arg2.Origin
+                            if origin and PlayerMouse then
+                                local dir = (PlayerMouse.Hit.Position - origin).Unit * 1000
+                                local customRayParams = RaycastParams.new()
+                                customRayParams.FilterType = Enum.RaycastFilterType.Exclude
+                                
+                                local ignoreList = {}
+                                if LocalPlayer.Character then table.insert(ignoreList, LocalPlayer.Character) end
+                                if debrisFolder then table.insert(ignoreList, debrisFolder) end
+                                customRayParams.FilterDescendantsInstances = ignoreList
+                                
+                                local result = Workspace:Raycast(origin, dir, customRayParams)
+                                if result then
+                                    arg2.HitPart = result.Instance
+                                    arg2.HitPos = result.Position
+                                    arg2.HitNormal = result.Normal
+                                else
+                                    arg2.HitPart = nil
+                                    arg2.HitPos = origin + dir
+                                    arg2.HitNormal = HIT_NORMAL
+                                end
+                            end
+                        end
+                        
+                        setnamecallmethod(Method)
+                        return oldNamecall(self, ...)
+                    end
                 end
             end
-        end
-        
-        if Method == "GetAttribute" or Method == "getAttribute" then
+        elseif Method == "GetAttribute" or Method == "getAttribute" then
             local arg1 = (...)
             if arg1 == "BulletSpread" and Toggles and Toggles.NoSpread and Toggles.NoSpread.Value then
                 setnamecallmethod(Method)
                 local realVal = oldNamecall(self, ...)
                 if type(realVal) == "number" then return 0 end
-                if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
-                if typeof(realVal) == "Vector2" then return v2(0, 0) end
+                if typeof(realVal) == "Vector3" then return Vector3.new(0, 0, 0) end
+                if typeof(realVal) == "Vector2" then return Vector2.new(0, 0) end
                 if type(realVal) == "boolean" then return false end
                 return 0
             end
@@ -1142,8 +1321,8 @@ oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
                 setnamecallmethod(Method)
                 local realVal = oldNamecall(self, ...)
                 if type(realVal) == "number" then return 0 end
-                if typeof(realVal) == "Vector3" then return v3(0, 0, 0) end
-                if typeof(realVal) == "Vector2" then return v2(0, 0) end
+                if typeof(realVal) == "Vector3" then return Vector3.new(0, 0, 0) end
+                if typeof(realVal) == "Vector2" then return Vector2.new(0, 0) end
                 if type(realVal) == "boolean" then return false end
                 return 0
             end
@@ -1153,91 +1332,8 @@ oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
                 return
             end
         elseif Method == "Fire" then
-            if self.Name == "CameraShake" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
+            if name == "CameraShake" and Toggles and Toggles.NoRecoil and Toggles.NoRecoil.Value then
                 return
-            end
-        elseif Method == "FireServer" and self.Name == "GunEvent" then
-            local arg1, arg2 = ...
-            if arg1 == "FireShot" and type(arg2) == "table" then
-                if Toggles and Options then
-                    local overriden = false
-                    local shouldSilentAim = true
-                    
-                    local char = LocalPlayer.Character
-                    local tool = char and char:FindFirstChildOfClass("Tool")
-                    local weaponType = getWeaponFolder(tool)
-
-                    if Toggles.RandomizeBullets and Toggles.RandomizeBullets.Value and weaponType == "Shotgun" then
-                        if not CalculateChance(Options.MultiBulletChance.Value) then
-                            shouldSilentAim = false
-                        end
-                    end
-
-                    if shouldSilentAim then
-                        local currentCamera = Workspace.CurrentCamera
-                        if currentCamera then
-                            local mousePos = UserInputService:GetMouseLocation()
-                            local _, HitPart, HitPos, isNPC = getClosestCharacterToMouse(mousePos, currentCamera)
-
-                            if HitPart and HitPos then
-                                local chance = isNPC and Options.NPCHitchance.Value or Options.Hitchance.Value
-                                local bypassDistance = isNPC and Options.NPCCloseRangeBypass.Value or Options.CloseRangeBypass.Value
-                                local bypassDistanceSq = bypassDistance * bypassDistance
-                                
-                                if char then
-                                    local hrp = char:FindFirstChild("HumanoidRootPart")
-                                    if hrp then
-                                        local distanceX = hrp.Position.X - HitPos.X
-                                        local distanceY = hrp.Position.Y - HitPos.Y
-                                        local distanceZ = hrp.Position.Z - HitPos.Z
-                                        local distance3DSq = (distanceX * distanceX) + (distanceY * distanceY) + (distanceZ * distanceZ)
-
-                                        if distance3DSq <= bypassDistanceSq then
-                                            chance = 100
-                                        end
-                                    end
-                                end
-                        
-                                if CalculateChance(chance) then
-                                    arg2.HitPart = HitPart
-                                    arg2.HitPos = HitPos
-                                    if arg2.Origin then
-                                        arg2.Direction = (HitPos - arg2.Origin).Unit
-                                        arg2.Distance = (HitPos - arg2.Origin).Magnitude
-                                    end
-                                    arg2.HitNormal = HIT_NORMAL
-                                    overriden = true
-                                end
-                            end
-                        end
-                    end
-                    
-                    if not overriden and Toggles.NoSpread and Toggles.NoSpread.Value then
-                        local origin = arg2.Origin
-                        if origin and PlayerMouse then
-                            local dir = (PlayerMouse.Hit.Position - origin).Unit * 1000
-                            
-                            local ignoreList = {}
-                            if LocalPlayer.Character then t_insert(ignoreList, LocalPlayer.Character) end
-                            if debrisFolder then t_insert(ignoreList, debrisFolder) end
-                            noSpreadRayParams.FilterDescendantsInstances = ignoreList
-                            
-                            local result = Workspace:Raycast(origin, dir, noSpreadRayParams)
-                            if result then
-                                arg2.HitPart = result.Instance
-                                arg2.HitPos = result.Position
-                                arg2.HitNormal = result.Normal
-                            else
-                                arg2.HitPart = nil
-                                arg2.HitPos = origin + dir
-                                arg2.HitNormal = HIT_NORMAL
-                            end
-                        end
-                    end
-                    
-                    setnamecallmethod(Method)
-                    return oldNamecall(self, ...)
-                end
             end
         end
     end
@@ -1262,7 +1358,7 @@ task.spawn(function()
             return oldUpdate(self, ...)
         end
         if Toggles and Toggles.DisableCameraShake and Toggles.DisableCameraShake.Value then
-            return cf_new()
+            return CFrame.new()
         end
         return oldUpdate(self, ...)
     end)
@@ -1368,7 +1464,7 @@ task.spawn(function()
     end
 
     if Interactables then
-        t_insert(Connections, Interactables.DescendantAdded:Connect(function(descendant)
+        table.insert(Connections, Interactables.DescendantAdded:Connect(function(descendant)
             if descendant:IsA("ModuleScript") and Toggles and Toggles.InstantInteract and Toggles.InstantInteract.Value then
                 task.delay(0.5, function()
                     local success, result = pcall(require, descendant)
@@ -1401,15 +1497,15 @@ local function setupStamina(character)
         end
         
         syncStamina()
-        t_insert(Connections, staminaValue:GetAttributeChangedSignal("MaxStamina"):Connect(syncStamina))
-        t_insert(Connections, staminaValue:GetPropertyChangedSignal("Value"):Connect(syncStamina))
+        table.insert(Connections, staminaValue:GetAttributeChangedSignal("MaxStamina"):Connect(syncStamina))
+        table.insert(Connections, staminaValue:GetPropertyChangedSignal("Value"):Connect(syncStamina))
     end)
 end
 
 if LocalPlayer.Character then
     setupStamina(LocalPlayer.Character)
 end
-t_insert(Connections, LocalPlayer.CharacterAdded:Connect(setupStamina))
+table.insert(Connections, LocalPlayer.CharacterAdded:Connect(setupStamina))
 
 task.spawn(function()
     local playerConfig = LocalPlayer:WaitForChild("PlayerConfig", 5)
@@ -1428,8 +1524,8 @@ task.spawn(function()
             end
         end
         syncAmmo()
-        t_insert(Connections, ammoValue:GetAttributeChangedSignal("MaxAmmo"):Connect(syncAmmo))
-        t_insert(Connections, ammoValue:GetPropertyChangedSignal("Value"):Connect(syncAmmo))
+        table.insert(Connections, ammoValue:GetAttributeChangedSignal("MaxAmmo"):Connect(syncAmmo))
+        table.insert(Connections, ammoValue:GetPropertyChangedSignal("Value"):Connect(syncAmmo))
     end
 
     for _, ammoName in ipairs(ammoTypes) do
@@ -1440,65 +1536,11 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
-    local playerData = LocalPlayer:WaitForChild("PlayerData", 5)
-    if not playerData then return end
-
-    local function maintainThirst()
-        if Toggles and Toggles.AutoThirst and Toggles.AutoThirst.Value then
-            if playerData:GetAttribute("Thirst") ~= 100 then
-                playerData:SetAttribute("Thirst", 100)
-            end
-        end
-    end
-
-    local function maintainHunger()
-        if Toggles and Toggles.AutoHunger and Toggles.AutoHunger.Value then
-            if playerData:GetAttribute("Hunger") ~= 100 then
-                playerData:SetAttribute("Hunger", 100)
-            end
-        end
-    end
-
-    maintainThirst()
-    maintainHunger()
-    
-    t_insert(Connections, playerData:GetAttributeChangedSignal("Thirst"):Connect(maintainThirst))
-    t_insert(Connections, playerData:GetAttributeChangedSignal("Hunger"):Connect(maintainHunger))
-    
-    if Toggles then
-        if Toggles.AutoThirst then Toggles.AutoThirst:OnChanged(maintainThirst) end
-        if Toggles.AutoHunger then Toggles.AutoHunger:OnChanged(maintainHunger) end
-    end
-end)
-
-local weightBenchDebounce = 0
 local cachedPlayerConfig = nil
 local cachedMovementVariables = nil
 
-t_insert(Connections, RunService.Heartbeat:Connect(function()
+table.insert(Connections, RunService.Heartbeat:Connect(function()
     local now = os.clock()
-    
-    if Toggles and Toggles.AutoWeightBench and Toggles.AutoWeightBench.Value then
-        if now - weightBenchDebounce >= 0.25 then
-            local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-            local minigame = playerGui and playerGui:FindFirstChild("WeightBenchMinigame")
-            if minigame then
-                local bar = minigame:FindFirstChild("Bar")
-                local goal = bar and bar:FindFirstChild("Goal")
-                local slider = bar and bar:FindFirstChild("Slider")
-                if goal and slider then
-                    local targetY = goal.Position.Y.Scale
-                    local currentSliderY = slider.Position.Y.Scale
-                    if m_abs(currentSliderY - targetY) <= 0.02 then
-                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game)
-                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game)
-                        weightBenchDebounce = now
-                    end
-                end
-            end
-        end
-    end
     
     if Toggles then
         if not cachedPlayerConfig or not cachedPlayerConfig.Parent then
@@ -1513,6 +1555,7 @@ t_insert(Connections, RunService.Heartbeat:Connect(function()
                     cachedMovementVariables:SetAttribute("WalkSpeed", ws)
                 end
             end
+            
             if Toggles.CustomSprintSpeed and Toggles.CustomSprintSpeed.Value then
                 local ss = Options.SprintSpeedValue.Value
                 if ss and cachedMovementVariables:GetAttribute("SprintSpeed") ~= ss then
@@ -1529,12 +1572,16 @@ Library:OnUnload(function()
     for _, conn in ipairs(Connections) do
         conn:Disconnect()
     end
-    table.clear(Connections)
     
     if FOVCircle then FOVCircle:Remove() end
     if FOVFilledCircle then FOVFilledCircle:Remove() end
     if TracerLine then TracerLine:Remove() end
     
+    for instance, drawing in pairs(ItemESPCache) do
+        if drawing then drawing:Remove() end
+    end
+    table.clear(ItemESPCache)
+
     if fullbrightConnection then
         fullbrightConnection:Disconnect()
     end
