@@ -844,14 +844,13 @@ WorldGroup:AddToggle('Fullbright', { Text = 'Fullbright', Default = false }):OnC
 end)
 
 local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
-    local espEnabled, boxEnabled, skeletonEnabled, nameEnabled, distanceEnabled, healthEnabled, healthTextEnabled
+    local boxEnabled, skeletonEnabled, nameEnabled, distanceEnabled, healthEnabled, healthTextEnabled
     local boxColorVal, nameColorVal, skelColorVal, boxTypeVal
     
     local teamColorEnabled = not isNPC and Toggles.ESPTeamColor.Value
     local toolEnabled = not isNPC and Toggles.ESPTool.Value
 
     if isNPC then
-        espEnabled = Toggles.NPCESPEnabled.Value
         boxEnabled = Toggles.NPCESPBox.Value
         skeletonEnabled = Toggles.NPCESPSkeleton.Value
         nameEnabled = Toggles.NPCESPName.Value
@@ -864,7 +863,6 @@ local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
         skelColorVal = Options.NPCSkeletonColor.Value
         boxTypeVal = Options.NPCESPBoxType.Value
     else
-        espEnabled = Toggles.ESPEnabled.Value
         boxEnabled = Toggles.ESPBox.Value
         skeletonEnabled = Toggles.ESPSkeleton.Value
         nameEnabled = Toggles.ESPName.Value
@@ -876,11 +874,6 @@ local function updateVisualsForCache(cacheTable, currentCamera, camPos, isNPC)
         nameColorVal = Options.NameColor.Value
         skelColorVal = Options.SkeletonColor.Value
         boxTypeVal = Options.ESPBoxType.Value
-    end
-
-    if not espEnabled then
-        for _, data in pairs(cacheTable) do hideVisuals(data) end
-        return
     end
     
     local needsBox = boxEnabled or nameEnabled or distanceEnabled or healthEnabled or toolEnabled or healthTextEnabled
@@ -1097,51 +1090,53 @@ task.spawn(function()
         local fireEnabled = Toggles.FireESP.Value
         local escapeEnabled = Toggles.EscapeESP.Value
 
-        if trashEnabled then
-            local interactable = Workspace:FindFirstChild("Interactable")
-            local sweepTrashFolder = interactable and interactable:FindFirstChild("SweepTrash")
-            
-            if sweepTrashFolder then
-                for _, trash in ipairs(sweepTrashFolder:GetChildren()) do
-                    local skip = false
-                    if trash.Name == "TrashPile" then
-                        local decal = trash:FindFirstChildWhichIsA("Decal")
-                        if decal and decal.Transparency >= 1 then skip = true end
-                    end
-                    if not skip then
-                        local part = trash:IsA("BasePart") and trash or trash.PrimaryPart or trash:FindFirstChildWhichIsA("BasePart")
-                        if part then
-                            newProcessed[trash] = { part = part, name = "Sweep Trash", color = Options.TrashColor.Value }
+        if trashEnabled or fireEnabled or escapeEnabled then
+            if trashEnabled then
+                local interactable = Workspace:FindFirstChild("Interactable")
+                local sweepTrashFolder = interactable and interactable:FindFirstChild("SweepTrash")
+                
+                if sweepTrashFolder then
+                    for _, trash in ipairs(sweepTrashFolder:GetChildren()) do
+                        local skip = false
+                        if trash.Name == "TrashPile" then
+                            local decal = trash:FindFirstChildWhichIsA("Decal")
+                            if decal and decal.Transparency >= 1 then skip = true end
+                        end
+                        if not skip then
+                            local part = trash:IsA("BasePart") and trash or trash.PrimaryPart or trash:FindFirstChildWhichIsA("BasePart")
+                            if part then
+                                newProcessed[trash] = { part = part, name = "Sweep Trash", color = Options.TrashColor.Value }
+                            end
                         end
                     end
                 end
             end
-        end
 
-        if fireEnabled then
-            local engineering = Workspace:FindFirstChild("Engineering")
-            local firesFolder = engineering and engineering:FindFirstChild("Fires")
-            
-            if firesFolder then
-                for _, fire in ipairs(firesFolder:GetChildren()) do
-                    local part = fire:IsA("BasePart") and fire or fire.PrimaryPart or fire:FindFirstChildWhichIsA("BasePart")
-                    if part then
-                        newProcessed[fire] = { part = part, name = "Fire", color = Options.FireColor.Value }
+            if fireEnabled then
+                local engineering = Workspace:FindFirstChild("Engineering")
+                local firesFolder = engineering and engineering:FindFirstChild("Fires")
+                
+                if firesFolder then
+                    for _, fire in ipairs(firesFolder:GetChildren()) do
+                        local part = fire:IsA("BasePart") and fire or fire.PrimaryPart or fire:FindFirstChildWhichIsA("BasePart")
+                        if part then
+                            newProcessed[fire] = { part = part, name = "Fire", color = Options.FireColor.Value }
+                        end
                     end
                 end
             end
-        end
 
-        if escapeEnabled then
-            local scps = Workspace:FindFirstChild("SCPs")
-            local dimensions = scps and scps:FindFirstChild("Dimensions")
-            local pocketDimension = dimensions and dimensions:FindFirstChild("PocketDimension")
-            local playerTeleports = pocketDimension and pocketDimension:FindFirstChild("PlayerTeleports")
-            
-            if playerTeleports then
-                for _, part in ipairs(playerTeleports:GetChildren()) do
-                    if part:IsA("BasePart") then
-                        newProcessed[part] = { part = part, name = "Escape", color = Options.EscapeColor.Value }
+            if escapeEnabled then
+                local scps = Workspace:FindFirstChild("SCPs")
+                local dimensions = scps and scps:FindFirstChild("Dimensions")
+                local pocketDimension = dimensions and dimensions:FindFirstChild("PocketDimension")
+                local playerTeleports = pocketDimension and pocketDimension:FindFirstChild("PlayerTeleports")
+                
+                if playerTeleports then
+                    for _, part in ipairs(playerTeleports:GetChildren()) do
+                        if part:IsA("BasePart") then
+                            newProcessed[part] = { part = part, name = "Escape", color = Options.EscapeColor.Value }
+                        end
                     end
                 end
             end
@@ -1158,17 +1153,35 @@ task.spawn(function()
                 end
             end
         else
+            local hasActive = false
             for effect, _ in pairs(activeVisualEffects) do
+                hasActive = true
                 if effect and effect.Parent then
                     effect.Enabled = true
                 end
             end
-            table.clear(activeVisualEffects)
+            if hasActive then
+                table.clear(activeVisualEffects)
+            end
         end
     end
 end)
 
 local function drawItemESP(currentCamera)
+    local hasItems = false
+    for _ in pairs(cachedProcessedInstances) do
+        hasItems = true
+        break
+    end
+    
+    if not hasItems then
+        for instance, drawing in pairs(ItemESPCache) do
+            drawing:Remove()
+            ItemESPCache[instance] = nil
+        end
+        return
+    end
+
     for instance, data in pairs(cachedProcessedInstances) do
         if not instance.Parent then continue end
         local textESP = getOrCreateItemESP(instance)
@@ -1191,6 +1204,9 @@ local function drawItemESP(currentCamera)
         end
     end
 end
+
+local espWasEnabled = false
+local npcEspWasEnabled = false
 
 table.insert(Connections, RunService.RenderStepped:Connect(function()
     local currentCamera = Workspace.CurrentCamera
@@ -1246,8 +1262,23 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
     end
 
     local camPos = currentCamera.CFrame.Position
-    updateVisualsForCache(ESPCache, currentCamera, camPos, false)
-    updateVisualsForCache(NPC_ESPCache, currentCamera, camPos, true)
+    
+    if Toggles.ESPEnabled.Value then
+        updateVisualsForCache(ESPCache, currentCamera, camPos, false)
+        espWasEnabled = true
+    elseif espWasEnabled then
+        for _, data in pairs(ESPCache) do hideVisuals(data) end
+        espWasEnabled = false
+    end
+    
+    if Toggles.NPCESPEnabled.Value then
+        updateVisualsForCache(NPC_ESPCache, currentCamera, camPos, true)
+        npcEspWasEnabled = true
+    elseif npcEspWasEnabled then
+        for _, data in pairs(NPC_ESPCache) do hideVisuals(data) end
+        npcEspWasEnabled = false
+    end
+    
     drawItemESP(currentCamera)
 end))
 
@@ -1256,8 +1287,8 @@ oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
     if checkcaller() or (Library and Library.Unloaded) then return oldIndex(self, key) end
     local keyStr = tostring(key)
     
-    if keyStr == "Value" then
-        if typeof(self) == "Instance" then
+    if keyStr == "Value" and typeof(self) == "Instance" then
+        if Toggles.NoSpread.Value or Toggles.NoRecoil.Value then
             local name = oldIndex(self, "Name")
             if name == "BulletSpread" and Toggles.NoSpread.Value then
                 local realVal = oldIndex(self, key)
@@ -1286,123 +1317,131 @@ oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
 
     if Method == "FireServer" or Method == "GetAttribute" or Method == "getAttribute" or Method == "BindToRenderStep" or Method == "Fire" then
         if typeof(self) == "Instance" then
-            local name = oldIndex(self, "Name")
-            
             if Method == "FireServer" then
-                if name == "SCP689Main" then
-                    local args = {...}
-                    if type(args) == "table" and #args > 0 and args[1] == "Seen" then
-                        if Toggles.AntiSCP689.Value then
-                            return nil
-                        end
-                    end
-                elseif name == "GunEvent" then
-                    local arg1, arg2 = ...
-                    if arg1 == "FireShot" and type(arg2) == "table" then
-                        local overriden = false
-                        local shouldSilentAim = true
-                        
-                        local char = LocalPlayer.Character
-                        local tool = char and char:FindFirstChildOfClass("Tool")
-                        local weaponType = getWeaponFolder(tool)
-
-                        if Toggles.RandomizeBullets.Value and weaponType == "Shotgun" then
-                            if not CalculateChance(Options.MultiBulletChance.Value) then
-                                shouldSilentAim = false
+                if Toggles.AntiSCP689.Value or Toggles.RandomizeBullets.Value or Toggles.NoSpread.Value or Toggles.SilentAimEnabled.Value or Toggles.NPCSilentAimEnabled.Value then
+                    local name = oldIndex(self, "Name")
+                    if name == "SCP689Main" then
+                        local args = {...}
+                        if type(args) == "table" and #args > 0 and args[1] == "Seen" then
+                            if Toggles.AntiSCP689.Value then
+                                return nil
                             end
                         end
+                    elseif name == "GunEvent" then
+                        local arg1, arg2 = ...
+                        if arg1 == "FireShot" and type(arg2) == "table" then
+                            local overriden = false
+                            local shouldSilentAim = true
+                            
+                            local char = LocalPlayer.Character
+                            local tool = char and char:FindFirstChildOfClass("Tool")
+                            local weaponType = getWeaponFolder(tool)
 
-                        if shouldSilentAim then
-                            local currentCamera = Workspace.CurrentCamera
-                            if currentCamera then
-                                local mousePos = UserInputService:GetMouseLocation()
-                                local _, HitPart, HitPos, isNPC = getClosestCharacterToMouse(mousePos, currentCamera, false)
+                            if Toggles.RandomizeBullets.Value and weaponType == "Shotgun" then
+                                if not CalculateChance(Options.MultiBulletChance.Value) then
+                                    shouldSilentAim = false
+                                end
+                            end
 
-                                if HitPart and HitPos then
-                                    local chance = isNPC and Options.NPCHitchance.Value or Options.Hitchance.Value
-                                    local bypassDistance = isNPC and Options.NPCCloseRangeBypass.Value or Options.CloseRangeBypass.Value
-                                    local bypassDistanceSq = bypassDistance * bypassDistance
-                                    
-                                    if char then
-                                        local hrp = char:FindFirstChild("HumanoidRootPart")
-                                        if hrp then
-                                            local distanceX = hrp.Position.X - HitPos.X
-                                            local distanceY = hrp.Position.Y - HitPos.Y
-                                            local distanceZ = hrp.Position.Z - HitPos.Z
-                                            if (distanceX * distanceX) + (distanceY * distanceY) + (distanceZ * distanceZ) <= bypassDistanceSq then
-                                                chance = 100
+                            if shouldSilentAim then
+                                local currentCamera = Workspace.CurrentCamera
+                                if currentCamera then
+                                    local mousePos = UserInputService:GetMouseLocation()
+                                    local _, HitPart, HitPos, isNPC = getClosestCharacterToMouse(mousePos, currentCamera, false)
+
+                                    if HitPart and HitPos then
+                                        local chance = isNPC and Options.NPCHitchance.Value or Options.Hitchance.Value
+                                        local bypassDistance = isNPC and Options.NPCCloseRangeBypass.Value or Options.CloseRangeBypass.Value
+                                        local bypassDistanceSq = bypassDistance * bypassDistance
+                                        
+                                        if char then
+                                            local hrp = char:FindFirstChild("HumanoidRootPart")
+                                            if hrp then
+                                                local distanceX = hrp.Position.X - HitPos.X
+                                                local distanceY = hrp.Position.Y - HitPos.Y
+                                                local distanceZ = hrp.Position.Z - HitPos.Z
+                                                if (distanceX * distanceX) + (distanceY * distanceY) + (distanceZ * distanceZ) <= bypassDistanceSq then
+                                                    chance = 100
+                                                end
                                             end
                                         end
-                                    end
-                            
-                                    if CalculateChance(chance) then
-                                        arg2.HitPart = HitPart
-                                        arg2.HitPos = HitPos
-                                        if arg2.Origin then
-                                            arg2.Direction = (HitPos - arg2.Origin).Unit
-                                            arg2.Distance = (HitPos - arg2.Origin).Magnitude
-                                        end
-                                        arg2.HitNormal = HIT_NORMAL
-                                        overriden = true
-                                    end
-                                end
-                            end
-                        end
-                        
-                        if not overriden and Toggles.NoSpread.Value then
-                            local origin = arg2.Origin
-                            if origin and PlayerMouse then
-                                local dir = (PlayerMouse.Hit.Position - origin).Unit * 1000
-                                local ignoreList = {}
-                                if LocalPlayer.Character then table.insert(ignoreList, LocalPlayer.Character) end
-                                if debrisFolder then table.insert(ignoreList, debrisFolder) end
-                                customGunRayParams.FilterDescendantsInstances = ignoreList
                                 
-                                local result = Workspace:Raycast(origin, dir, customGunRayParams)
-                                if result then
-                                    arg2.HitPart = result.Instance
-                                    arg2.HitPos = result.Position
-                                    arg2.HitNormal = result.Normal
-                                else
-                                    arg2.HitPart = nil
-                                    arg2.HitPos = origin + dir
-                                    arg2.HitNormal = HIT_NORMAL
+                                        if CalculateChance(chance) then
+                                            arg2.HitPart = HitPart
+                                            arg2.HitPos = HitPos
+                                            if arg2.Origin then
+                                                arg2.Direction = (HitPos - arg2.Origin).Unit
+                                                arg2.Distance = (HitPos - arg2.Origin).Magnitude
+                                            end
+                                            arg2.HitNormal = HIT_NORMAL
+                                            overriden = true
+                                        end
+                                    end
                                 end
                             end
+                            
+                            if not overriden and Toggles.NoSpread.Value then
+                                local origin = arg2.Origin
+                                if origin and PlayerMouse then
+                                    local dir = (PlayerMouse.Hit.Position - origin).Unit * 1000
+                                    local ignoreList = {}
+                                    if LocalPlayer.Character then table.insert(ignoreList, LocalPlayer.Character) end
+                                    if debrisFolder then table.insert(ignoreList, debrisFolder) end
+                                    customGunRayParams.FilterDescendantsInstances = ignoreList
+                                    
+                                    local result = Workspace:Raycast(origin, dir, customGunRayParams)
+                                    if result then
+                                        arg2.HitPart = result.Instance
+                                        arg2.HitPos = result.Position
+                                        arg2.HitNormal = result.Normal
+                                    else
+                                        arg2.HitPart = nil
+                                        arg2.HitPos = origin + dir
+                                        arg2.HitNormal = HIT_NORMAL
+                                    end
+                                end
+                            end
+                            
+                            setnamecallmethod(Method)
+                            return oldNamecall(self, ...)
                         end
-                        
-                        setnamecallmethod(Method)
-                        return oldNamecall(self, ...)
                     end
                 end
             elseif Method == "GetAttribute" or Method == "getAttribute" then
-                local arg1 = (...)
-                if arg1 == "BulletSpread" and Toggles.NoSpread.Value then
-                    setnamecallmethod(Method)
-                    local realVal = oldNamecall(self, ...)
-                    if type(realVal) == "number" then return 0 end
-                    if typeof(realVal) == "Vector3" then return Vector3.new(0, 0, 0) end
-                    if typeof(realVal) == "Vector2" then return Vector2.new(0, 0) end
-                    if type(realVal) == "boolean" then return false end
-                    return 0
-                end
-                if arg1 == "Recoil" and Toggles.NoRecoil.Value then
-                    setnamecallmethod(Method)
-                    local realVal = oldNamecall(self, ...)
-                    if type(realVal) == "number" then return 0 end
-                    if typeof(realVal) == "Vector3" then return Vector3.new(0, 0, 0) end
-                    if typeof(realVal) == "Vector2" then return Vector2.new(0, 0) end
-                    if type(realVal) == "boolean" then return false end
-                    return 0
+                if Toggles.NoSpread.Value or Toggles.NoRecoil.Value then
+                    local arg1 = (...)
+                    if arg1 == "BulletSpread" and Toggles.NoSpread.Value then
+                        setnamecallmethod(Method)
+                        local realVal = oldNamecall(self, ...)
+                        if type(realVal) == "number" then return 0 end
+                        if typeof(realVal) == "Vector3" then return Vector3.new(0, 0, 0) end
+                        if typeof(realVal) == "Vector2" then return Vector2.new(0, 0) end
+                        if type(realVal) == "boolean" then return false end
+                        return 0
+                    end
+                    if arg1 == "Recoil" and Toggles.NoRecoil.Value then
+                        setnamecallmethod(Method)
+                        local realVal = oldNamecall(self, ...)
+                        if type(realVal) == "number" then return 0 end
+                        if typeof(realVal) == "Vector3" then return Vector3.new(0, 0, 0) end
+                        if typeof(realVal) == "Vector2" then return Vector2.new(0, 0) end
+                        if type(realVal) == "boolean" then return false end
+                        return 0
+                    end
                 end
             elseif Method == "BindToRenderStep" then
-                local arg1 = (...)
-                if arg1 == "CameraRecoil" and Toggles.NoRecoil.Value then
-                    return
+                if Toggles.NoRecoil.Value then
+                    local arg1 = (...)
+                    if arg1 == "CameraRecoil" then
+                        return
+                    end
                 end
             elseif Method == "Fire" then
-                if name == "CameraShake" and Toggles.NoRecoil.Value then
-                    return
+                if Toggles.NoRecoil.Value then
+                    local name = oldIndex(self, "Name")
+                    if name == "CameraShake" then
+                        return
+                    end
                 end
             end
         end
