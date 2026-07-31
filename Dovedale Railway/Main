@@ -23,8 +23,95 @@ local Window = Library:CreateWindow({
 })
 
 local Tabs = {
+    Boxes = Window:AddTab('Boxes'),
     Settings = Window:AddTab('Settings')
 }
+
+local BoxGroup = Tabs.Boxes:AddLeftGroupbox('Signal Box Controls')
+
+local function resetAllLevers(boxName)
+    task.spawn(function()
+        local baseFolder = workspace:WaitForChild("Interlocking_Switches/Signals"):WaitForChild("Leverframes")
+        local leverFolder = baseFolder:FindFirstChild(boxName)
+        
+        if not leverFolder then
+            warn("Lever folder for " .. tostring(boxName) .. " not found!")
+            return
+        end
+
+        local maxAttempts = 50
+        local attempts = 0
+        local allReset = false
+
+        while not allReset and attempts < maxAttempts do
+            allReset = true
+            attempts += 1
+            
+            for _, lever in ipairs(leverFolder:GetChildren()) do
+                local values = lever:FindFirstChild("Values")
+                local clickDetector = lever:FindFirstChild("ClickDetector")
+                
+                if values and clickDetector then
+                    local pulled = values:FindFirstChild("Pulled")
+                    local interlocking = values:FindFirstChild("Interlocking")
+                    
+                    if pulled and pulled.Value == true then
+                        allReset = false
+                        
+                        local canPull = true
+                        if interlocking and interlocking:IsA("ModuleScript") then
+                            local success, ekObj = pcall(require, interlocking)
+                            if success and type(ekObj) == "table" and ekObj.checkInterlock then
+                                canPull = ekObj:checkInterlock("normalise")
+                            end
+                        end
+                        
+                        if canPull then
+                            fireclickdetector(clickDetector)
+                            task.wait(math.random(40, 80) / 100)
+                        end
+                    end
+                end
+            end
+            
+            task.wait(0.25)
+        end
+    end)
+end
+
+local boxDisplayNames = {}
+local displayNameToModelName = {}
+
+if workspace:FindFirstChild("BoxSystem") then
+    for _, boxModel in ipairs(workspace.BoxSystem:GetChildren()) do
+        local fullNameVal = boxModel:FindFirstChild("FullName")
+        if fullNameVal and fullNameVal:IsA("StringValue") then
+            local displayName = fullNameVal.Value
+            table.insert(boxDisplayNames, displayName)
+            displayNameToModelName[displayName] = boxModel.Name
+        end
+    end
+end
+
+table.sort(boxDisplayNames)
+
+BoxGroup:AddDropdown('SelectedBox', {
+    Values = boxDisplayNames,
+    Default = 1,
+    Multi = false,
+    Text = 'Select Signal Box'
+})
+
+BoxGroup:AddButton('Manual Levers Reset', function()
+    local currentSelection = Options.SelectedBox.Value
+    local actualModelName = displayNameToModelName[currentSelection]
+    
+    if actualModelName then
+        resetAllLevers(actualModelName)
+    else
+        warn("No valid model selected!")
+    end
+end)
 
 local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
 
@@ -53,6 +140,5 @@ Library:OnUnload(function()
     for _, conn in ipairs(Connections) do
         conn:Disconnect()
     end
-
     Library.Unloaded = true
 end)
