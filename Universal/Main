@@ -938,43 +938,68 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
     end
 end))
 
+local ExpectedArguments = {
+    Raycast = {
+        ArgCountRequired = 3,
+        Args = {
+            "Instance", "Vector3", "Vector3", "RaycastParams"
+        }
+    }
+}
+
+local function ValidateArguments(Args, RayMethod)
+    local Matches = 0
+    if #Args < RayMethod.ArgCountRequired then
+        return false
+    end
+    for Pos, Argument in next, Args do
+        if typeof(Argument) == RayMethod.Args[Pos] then
+            Matches = Matches + 1
+        end
+    end
+    return Matches >= RayMethod.ArgCountRequired
+end
+
+local function getDirection(Origin, Position)
+    return (Position - Origin).Unit * 1000
+end
+
 local oldNamecall
-oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(...)
     local Method = tostring(getnamecallmethod())
+    local Arguments = {...}
+    local self = Arguments[1]
     
-    if checkcaller() or (Library and Library.Unloaded) then return oldNamecall(self, ...) end
+    if Library and Library.Unloaded then return oldNamecall(...) end
 
-    if Method == "Raycast" and self == Workspace and Options.SilentAimMethod.Value == 'Raycast' then
-        if Toggles.SilentAimEnabled.Value then
-            local cachedPart = silentAimTarget.part
-            local cachedHitPos = silentAimTarget.hitPos
-            
+    local chance = CalculateChance(Options.Hitchance.Value)
+
+    if Toggles.SilentAimEnabled.Value and self == Workspace and not checkcaller() and chance == true then
+        if Method == "Raycast" and Options.SilentAimMethod.Value == 'Raycast' then
             local calling_script = getcallingscript and getcallingscript()
-            if calling_script then
-                local scriptName = calling_script.Name
-                if scriptName == "CameraModule" or scriptName == "Poppercam" or scriptName == "ZoomController" or scriptName == "TransparencyController" then
-                    return oldNamecall(self, ...)
-                end
+            if calling_script and (calling_script.Name == "CameraModule" or calling_script.Name == "Poppercam" or calling_script.Name == "ZoomController" or calling_script.Name == "TransparencyController") then
+                return oldNamecall(...)
             end
+            
+            if ValidateArguments(Arguments, ExpectedArguments.Raycast) then
+                local A_Origin = Arguments[2]
+                local HitPart = silentAimTarget.part
+                local HitPos = silentAimTarget.hitPos
 
-            local args = {...}
-            if type(args[1]) == "Vector3" and type(args[2]) == "Vector3" then
-                if cachedPart and cachedHitPos then
-                    local chance = Options.Hitchance.Value
-                    if CalculateChance(chance) then
-                        local hitPos = cachedHitPos
-                        if Toggles.PredictionEnabled.Value then
-                            hitPos = hitPos + (cachedPart.Velocity * Options.PredictionAmount.Value)
-                        end
-                        args[2] = (hitPos - args[1]).Unit * 1000
-                        return oldNamecall(self, unpack(args))
+                if HitPart and HitPos then
+                    local finalHitPos = HitPos
+                    if Toggles.PredictionEnabled.Value then
+                        finalHitPos = finalHitPos + (HitPart.Velocity * Options.PredictionAmount.Value)
                     end
+                    
+                    Arguments[3] = getDirection(A_Origin, finalHitPos)
+                    return oldNamecall(unpack(Arguments))
                 end
             end
         end
     end
     
-    return oldNamecall(self, ...)
+    return oldNamecall(...)
 end))
 
 local oldIndex = nil 
