@@ -12,20 +12,16 @@ getgenv()._UnloadPreviousInstance = function()
     end
 end
 
+local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
-local Terrain = Workspace.Terrain
-local CurrentCamera = Workspace.CurrentCamera
 local RunService = game:GetService("RunService")
-
-local TerrainConnection
-local CameraConnection
-local TerrainDescendantConnections = {}
-local CameraDescendantConnections = {}
+local LocalPlayer = Players.LocalPlayer
+local CurrentCamera = Workspace.CurrentCamera
 
 local combatModule = nil
 local origGetMisfired, origCannonPass, origBulletPass
 
-for _, v in pairs(getgc(true)) do
+for _, v in ipairs(getgc(true)) do
     if type(v) == "table" and rawget(v, "getMisfired") and rawget(v, "bulletPass") and rawget(v, "cannonPassMoraleShock") then
         combatModule = v
         origGetMisfired = v.getMisfired
@@ -36,7 +32,7 @@ for _, v in pairs(getgc(true)) do
 end
 
 if not combatModule and getloadedmodules then
-    for _, mod in pairs(getloadedmodules()) do
+    for _, mod in ipairs(getloadedmodules()) do
         if typeof(mod) == "Instance" and mod:IsA("ModuleScript") then
             local success, ret = pcall(require, mod)
             if success and type(ret) == "table" and rawget(ret, "getMisfired") then
@@ -50,10 +46,69 @@ if not combatModule and getloadedmodules then
     end
 end
 
+local function findModuleBySignature(signatures)
+    if getgc then
+        for _, item in ipairs(getgc(true)) do
+            if type(item) == "table" then
+                local match = true
+                for _, sig in ipairs(signatures) do
+                    if type(rawget(item, sig)) ~= "function" then
+                        match = false
+                        break
+                    end
+                end
+                if match then return item end
+            end
+        end
+    end
+
+    if getloadedmodules then
+        for _, mod in ipairs(getloadedmodules()) do
+            if typeof(mod) == "Instance" and mod:IsA("ModuleScript") then
+                local ok, res = pcall(require, mod)
+                if ok and type(res) == "table" then
+                    local match = true
+                    for _, sig in ipairs(signatures) do
+                        if type(rawget(res, sig)) ~= "function" then
+                            match = false
+                            break
+                        end
+                    end
+                    if match then return res end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local WeaponsDamageClient = findModuleBySignature({"dealMelee", "dealMeleeToHorse", "getHorseByModelPart"})
+local WeaponsTargetsClient = findModuleBySignature({"hitTarget"})
+
+local cachedTargets = {}
+
+for _, obj in ipairs(Workspace:GetDescendants()) do
+    if obj.Name == "TargetModel" and obj:IsA("Model") then
+        cachedTargets[obj] = true
+    end
+end
+
+local descendantAddedConn = Workspace.DescendantAdded:Connect(function(obj)
+    if obj.Name == "TargetModel" and obj:IsA("Model") then
+        cachedTargets[obj] = true
+    end
+end)
+
+local descendantRemovingConn = Workspace.DescendantRemoving:Connect(function(obj)
+    if cachedTargets[obj] then
+        cachedTargets[obj] = nil
+    end
+end)
+
 local camShakers = {}
 local shakeClasses = {}
 
-for _, obj in pairs(getgc(true)) do
+for _, obj in ipairs(getgc(true)) do
     if type(obj) == "table" then
         if rawget(obj, "_camShakeInstances") and rawget(obj, "Update") then
             table.insert(camShakers, {instance = obj, origUpdate = obj.Update})
@@ -64,92 +119,53 @@ for _, obj in pairs(getgc(true)) do
     end
 end
 
-local function neutralizeVisual(object)
-    if object:IsA("ParticleEmitter") then
-        object.Enabled = false
-        object.Rate = 0
-        task.defer(function()
-            object:Destroy()
-        end)
-    elseif object:IsA("Light") then
-        task.defer(function()
-            object:Destroy()
-        end)
-    end
-end
-
-local function monitorTerrainChild(child)
-    if child:IsA("Attachment") then
-        for _, descendant in ipairs(child:GetDescendants()) do
-            neutralizeVisual(descendant)
-        end
-        table.insert(TerrainDescendantConnections, child.DescendantAdded:Connect(neutralizeVisual))
-    end
-end
-
-local function monitorCameraChild(child)
-    if child.Name == "CombatScreenEffectsPart" or child:IsA("Attachment") then
-        for _, descendant in ipairs(child:GetDescendants()) do
-            neutralizeVisual(descendant)
-        end
-        table.insert(CameraDescendantConnections, child.DescendantAdded:Connect(neutralizeVisual))
-    end
-end
-
 local Window = Library:CreateWindow({
-    Title      = 'Napoleonic Wars',
-    Center     = true,
-    AutoShow   = true,
+    Title = 'Napoleonic Wars',
+    Center = true,
+    AutoShow = true,
     TabPadding = 8,
     MenuFadeTime = 0.2
 })
 
 local Tabs = {
-    Combat = Window:AddTab('Combat'),
-    Visuals = Window:AddTab('Visuals'),
+    Rage = Window:AddTab('Rage'),
     Misc = Window:AddTab('Misc'),
     Settings = Window:AddTab('Settings')
 }
 
+local MeleeGroup = Tabs.Rage:AddLeftGroupbox('Melee Aura')
 local WeaponGroup = Tabs.Misc:AddLeftGroupbox('Weapon')
 local PlayerGroup = Tabs.Misc:AddRightGroupbox('Player')
 local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
 
-WeaponGroup:AddToggle('CleanTerrain', { Text = 'Clean Terrain Visuals', Default = false }):OnChanged(function()
-    if Toggles.CleanTerrain.Value then
-        for _, child in ipairs(Terrain:GetChildren()) do
-            monitorTerrainChild(child)
-        end
-        TerrainConnection = Terrain.ChildAdded:Connect(monitorTerrainChild)
-    else
-        if TerrainConnection then
-            TerrainConnection:Disconnect()
-            TerrainConnection = nil
-        end
-        for _, conn in ipairs(TerrainDescendantConnections) do
-            conn:Disconnect()
-        end
-        table.clear(TerrainDescendantConnections)
+MeleeGroup:AddToggle('MeleeAuraEnable', { Text = 'Enable', Default = false })
+MeleeGroup:AddSlider('MeleeAuraRange', { Text = 'Range', Default = 12, Min = 5, Max = 30, Rounding = 1 })
+MeleeGroup:AddSlider('MeleeAuraDelay', { Text = 'Delay', Default = 0.5, Min = 0.5, Max = 1, Rounding = 2 })
+
+MeleeGroup:AddToggle('MeleeAuraPriorityLow', { Text = 'Prioritize Low Health', Default = false }):OnChanged(function()
+    if Toggles.MeleeAuraPriorityLow.Value and Toggles.MeleeAuraPriorityHigh.Value then
+        Toggles.MeleeAuraPriorityHigh:SetValue(false)
     end
 end)
 
-WeaponGroup:AddToggle('CleanCamera', { Text = 'Clean Camera Visuals', Default = false }):OnChanged(function()
-    if Toggles.CleanCamera.Value then
-        for _, child in ipairs(CurrentCamera:GetChildren()) do
-            monitorCameraChild(child)
-        end
-        CameraConnection = CurrentCamera.ChildAdded:Connect(monitorCameraChild)
-    else
-        if CameraConnection then
-            CameraConnection:Disconnect()
-            CameraConnection = nil
-        end
-        for _, conn in ipairs(CameraDescendantConnections) do
-            conn:Disconnect()
-        end
-        table.clear(CameraDescendantConnections)
+MeleeGroup:AddToggle('MeleeAuraPriorityHigh', { Text = 'Prioritize High Health', Default = false }):OnChanged(function()
+    if Toggles.MeleeAuraPriorityHigh.Value and Toggles.MeleeAuraPriorityLow.Value then
+        Toggles.MeleeAuraPriorityLow:SetValue(false)
     end
 end)
+
+MeleeGroup:AddToggle('CustomDamageToggle', { Text = 'Custom Damage', Default = false })
+MeleeGroup:AddSlider('CustomDamageAmount', { Text = 'Damage Amount', Default = 50, Min = 1, Max = 50, Rounding = 0 })
+
+MeleeGroup:AddToggle('MeleeAuraCircle', { Text = 'Show Range Circle', Default = false }):AddColorPicker('RangeCircleColor', {
+    Default = Color3.new(1, 1, 1),
+    Title = 'Range Circle Color'
+})
+
+MeleeGroup:AddToggle('MeleeAuraTracer', { Text = 'Show Target Tracer', Default = false }):AddColorPicker('TracerColor', {
+    Default = Color3.new(1, 0, 0),
+    Title = 'Target Tracer Color'
+})
 
 WeaponGroup:AddToggle('AntiMisfire', { Text = 'Anti-Misfire', Default = false }):OnChanged(function()
     if combatModule then
@@ -223,20 +239,183 @@ Library:SetWatermarkVisibility(false)
 
 ThemeManager:SetLibrary(Library)
 SaveManager:SetLibrary(Library)
-ThemeManager:SetFolder('NapoleonicWarsConfig')
-SaveManager:SetFolder('NapoleonicWarsConfig')
+ThemeManager:SetFolder('Napoleonic Wars')
+SaveManager:SetFolder('Napoleonic Wars')
 SaveManager:IgnoreThemeSettings()
 ThemeManager:ApplyToTab(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
+local rangeLines = {}
+for i = 1, 30 do
+    local line = Drawing.new("Line")
+    line.Thickness = 1
+    line.Transparency = 1
+    line.Visible = false
+    table.insert(rangeLines, line)
+end
+
+local targetTracer = Drawing.new("Line")
+targetTracer.Thickness = 1
+targetTracer.Transparency = 1
+targetTracer.Visible = false
+
+local currentTargetRoot = nil
+
+local renderConnection = RunService.RenderStepped:Connect(function()
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+
+    if Toggles.MeleeAuraEnable.Value and Toggles.MeleeAuraCircle.Value and root then
+        local range = Options.MeleeAuraRange.Value
+        local rootPos = root.Position - Vector3.new(0, 3, 0)
+        local angle = (math.pi * 2) / 30
+        local points = {}
+
+        for i = 1, 30 do
+            local currentAngle = angle * i
+            local point3d = rootPos + Vector3.new(math.cos(currentAngle) * range, 0, math.sin(currentAngle) * range)
+            local point2d, onScreen = CurrentCamera:WorldToViewportPoint(point3d)
+            points[i] = {pos = Vector2.new(point2d.X, point2d.Y), onScreen = onScreen}
+        end
+
+        for i = 1, 30 do
+            local p1 = points[i]
+            local p2 = points[i == 30 and 1 or i + 1]
+            local line = rangeLines[i]
+
+            if p1.onScreen or p2.onScreen then
+                line.From = p1.pos
+                line.To = p2.pos
+                line.Color = Options.RangeCircleColor.Value
+                line.Visible = true
+            else
+                line.Visible = false
+            end
+        end
+    else
+        for i = 1, 30 do
+            rangeLines[i].Visible = false
+        end
+    end
+
+    if Toggles.MeleeAuraEnable.Value and Toggles.MeleeAuraTracer.Value and root and currentTargetRoot and currentTargetRoot.Parent then
+        local rootPos, rootOnScreen = CurrentCamera:WorldToViewportPoint(root.Position)
+        local targetPos, targetOnScreen = CurrentCamera:WorldToViewportPoint(currentTargetRoot.Position)
+        
+        if rootOnScreen or targetOnScreen then
+            targetTracer.From = Vector2.new(rootPos.X, rootPos.Y)
+            targetTracer.To = Vector2.new(targetPos.X, targetPos.Y)
+            targetTracer.Color = Options.TracerColor.Value
+            targetTracer.Visible = true
+        else
+            targetTracer.Visible = false
+        end
+    else
+        targetTracer.Visible = false
+    end
+end)
+
+local auraTask = task.spawn(function()
+    while true do
+        local delay = Options.MeleeAuraDelay and Options.MeleeAuraDelay.Value or 0.5
+        task.wait(delay)
+
+        if not Toggles.MeleeAuraEnable or not Toggles.MeleeAuraEnable.Value or not WeaponsDamageClient then 
+            currentTargetRoot = nil
+            continue 
+        end
+
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then 
+            currentTargetRoot = nil
+            continue 
+        end
+
+        local origin = root.Position
+        local range = Options.MeleeAuraRange.Value
+        local validTargets = {}
+
+        local localTeam = LocalPlayer.Team
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Team ~= localTeam then
+                local pChar = player.Character
+                if pChar then
+                    local hum = pChar:FindFirstChildWhichIsA("Humanoid")
+                    local targetRoot = pChar:FindFirstChild("HumanoidRootPart")
+                    if hum and targetRoot and hum.Health > 0 then
+                        local dist = (targetRoot.Position - origin).Magnitude
+                        if dist <= range then
+                            table.insert(validTargets, {
+                                Player = player,
+                                Humanoid = hum,
+                                Root = targetRoot,
+                                Health = hum.Health,
+                                IsModel = false
+                            })
+                        end
+                    end
+                end
+            end
+        end
+
+        if WeaponsTargetsClient then
+            for obj in pairs(cachedTargets) do
+                if obj.Parent then
+                    local primary = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+                    if primary then
+                        local dist = (primary.Position - origin).Magnitude
+                        if dist <= range then
+                            table.insert(validTargets, {
+                                Object = obj,
+                                Root = primary,
+                                Health = 100, 
+                                IsModel = true
+                            })
+                        end
+                    end
+                else
+                    cachedTargets[obj] = nil
+                end
+            end
+        end
+
+        if #validTargets > 0 then
+            if Toggles.MeleeAuraPriorityLow.Value then
+                table.sort(validTargets, function(a, b) return a.Health < b.Health end)
+            elseif Toggles.MeleeAuraPriorityHigh.Value then
+                table.sort(validTargets, function(a, b) return a.Health > b.Health end)
+            end
+
+            currentTargetRoot = validTargets[1].Root
+            
+            local currentDamage = Toggles.CustomDamageToggle.Value and Options.CustomDamageAmount.Value or 50
+
+            for _, target in ipairs(validTargets) do
+                if target.IsModel then
+                    WeaponsTargetsClient.hitTarget(target.Object, currentDamage)
+                else
+                    WeaponsDamageClient.dealMelee(target.Player, target.Humanoid, currentDamage)
+                end
+            end
+        else
+            currentTargetRoot = nil
+        end
+    end
+end)
+
 Library:OnUnload(function()
-    if TerrainConnection then TerrainConnection:Disconnect() end
-    if CameraConnection then CameraConnection:Disconnect() end
-    
-    for _, conn in ipairs(TerrainDescendantConnections) do conn:Disconnect() end
-    for _, conn in ipairs(CameraDescendantConnections) do conn:Disconnect() end
-    
     if camShakeTask then task.cancel(camShakeTask) end
+    if auraTask then task.cancel(auraTask) end
+    if descendantAddedConn then descendantAddedConn:Disconnect() end
+    if descendantRemovingConn then descendantRemovingConn:Disconnect() end
+    if renderConnection then renderConnection:Disconnect() end
+    
+    for i = 1, 30 do
+        if rangeLines[i] then rangeLines[i]:Remove() end
+    end
+    
+    if targetTracer then targetTracer:Remove() end
     
     if combatModule then
         combatModule.getMisfired = origGetMisfired
