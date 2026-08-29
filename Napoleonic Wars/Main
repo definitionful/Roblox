@@ -15,12 +15,29 @@ end
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local Teams = game:GetService("Teams")
 local Workspace = game:GetService("Workspace")
-
+local TextService = game:GetService("TextService")
 local LocalPlayer = Players.LocalPlayer
 
 local ProjectileArray = nil
+local lastArraySearch = 0
+local lastTargetUpdateTime = 0
+local TARGET_UPDATE_INTERVAL = 1 / 20
+
+local function resolveTargetModule()
+    for _, descendant in ipairs(TextService:GetDescendants()) do
+        if descendant:IsA("ModuleScript") then
+            local success, result = pcall(require, descendant)
+            if success and type(result) == "table" and type(rawget(result, "getMisfired")) == "function" then
+                return result
+            end
+        end
+    end
+    return nil
+end
+
+local targetModule = resolveTargetModule()
+
 for _, inst in ipairs(getinstances()) do
     if inst.ClassName == "ModuleScript" and inst.Name == "UtilityIncidentsClient" then
         local success, util = pcall(require, inst)
@@ -150,15 +167,6 @@ setDrawingProp(MeleeTargetTracer, "Thickness", 1)
 setDrawingProp(MeleeTargetTracer, "Transparency", 1)
 setDrawingProp(MeleeTargetTracer, "Visible", false)
 
-local MULTIPOINT_OFFSETS = {
-    Vector3.new(0, 0, 0),
-    Vector3.new(1, 1, 1), Vector3.new(-1, 1, 1), Vector3.new(1, -1, 1), Vector3.new(-1, -1, 1),
-    Vector3.new(1, 1, -1), Vector3.new(-1, 1, -1), Vector3.new(1, -1, -1), Vector3.new(-1, -1, -1),
-    Vector3.new(1, 0, 0), Vector3.new(-1, 0, 0), Vector3.new(0, 1, 0), Vector3.new(0, -1, 0)
-}
-
-local sharedRayParams = RaycastParams.new()
-sharedRayParams.FilterType = Enum.RaycastFilterType.Exclude
 local sharedVisibilityParams = RaycastParams.new()
 sharedVisibilityParams.FilterType = Enum.RaycastFilterType.Exclude
 
@@ -166,6 +174,7 @@ local filterList = {}
 local dynamicFilterList = {}
 local entitiesList = {}
 local potentialTargetsList = {}
+local meleeAuraPoints = {}
 
 local debrisFolder = Workspace:FindFirstChild("Debris")
 local rayExceptionFolder = debrisFolder and debrisFolder:FindFirstChild("RayException")
@@ -183,37 +192,22 @@ local Options = getgenv().Options
 
 local Tabs = {
     Combat = Window:AddTab('Combat'),
+    Misc = Window:AddTab('Misc'),
     Settings = Window:AddTab('Settings')
 }
 
-local SilentAimGroup = Tabs.Combat:AddLeftGroupbox('Player Silent Aim')
+local SilentAimGroup = Tabs.Combat:AddLeftGroupbox('Silent Aim')
 local MeleeGroup = Tabs.Combat:AddLeftGroupbox('Melee Aura')
 local FOVGroup = Tabs.Combat:AddRightGroupbox('FOV')
 local TracerGroup = Tabs.Combat:AddRightGroupbox('Tracer')
+local MiscTabbox = Tabs.Misc:AddLeftTabbox()
+local WeaponTab = MiscTabbox:AddTab('Weapon')
 local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
 
 SilentAimGroup:AddToggle('SilentAimEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('SilentAimKeybind', { Default = 'NONE', SyncToggleState = true, Mode = 'Toggle', Text = 'Silent Aim' })
-SilentAimGroup:AddToggle('VisibleCheck', { Text = 'Visible Check', Default = false })
-SilentAimGroup:AddToggle('InvisibleCheck', { Text = 'Invisible Check', Default = false })
-
-local TeamNames = {}
-for _, team in ipairs(Teams:GetTeams()) do
-    table.insert(TeamNames, team.Name)
-end
-table.sort(TeamNames)
-SilentAimGroup:AddDropdown('IgnoredTeams', { Values = TeamNames, Default = 0, Multi = true, Text = 'Ignored Teams' })
-
-local function UpdateTeamDropdown()
-    local newTeams = {}
-    for _, team in ipairs(Teams:GetTeams()) do
-        table.insert(newTeams, team.Name)
-    end
-    table.sort(newTeams)
-    Options.IgnoredTeams:SetValues(newTeams)
-end
-
-table.insert(Connections, Teams.ChildAdded:Connect(UpdateTeamDropdown))
-table.insert(Connections, Teams.ChildRemoved:Connect(UpdateTeamDropdown))
+SilentAimGroup:AddToggle('VisibleCheck', { Text = 'Visible Check', Default = true })
+SilentAimGroup:AddSlider('SilentAimMaxDist', { Text = 'Max Distance', Default = 1000, Min = 1, Max = 1000, Rounding = 0, Suffix = ' studs' })
+SilentAimGroup:AddSlider('HitChance', { Text = 'Hit Chance', Default = 100, Min = 0, Max = 100, Rounding = 0, Suffix = '%' })
 
 MeleeGroup:AddToggle('MeleeAuraEnable', { Text = 'Enable', Default = false })
 MeleeGroup:AddSlider('MeleeAuraRange', { Text = 'Range', Default = 12, Min = 5, Max = 30, Rounding = 1 })
@@ -246,6 +240,11 @@ FOVGroup:AddSlider('FOVFilledTransparency', { Text = 'Filled Transparency', Defa
 TracerGroup:AddToggle('TracerEnabled', { Text = 'Enable', Default = false }):AddColorPicker('TracerColor', { Default = Library.AccentColor })
 TracerGroup:AddSlider('TracerThickness', { Text = 'Thickness', Default = 1, Min = 1, Max = 10, Rounding = 0 })
 
+WeaponTab:AddToggle('NoRecoil', { Text = 'No Recoil', Default = false })
+WeaponTab:AddToggle('NoSpread', { Text = 'No Spread', Default = false })
+WeaponTab:AddToggle('InstantAim', { Text = 'Instant Aim', Default = false })
+WeaponTab:AddToggle('NoMisfire', { Text = 'No Misfire', Default = false })
+
 MenuGroup:AddToggle('WatermarkToggle', { Text = 'Watermark', Default = false }):OnChanged(function()
     Library:SetWatermarkVisibility(Toggles.WatermarkToggle.Value)
 end)
@@ -269,6 +268,61 @@ Options.AccentColor:OnChanged(function()
     Options.TracerColor:SetValueRGB(Options.AccentColor.Value)
 end)
 
+if targetModule then
+    local origGetMisfired = targetModule.getMisfired
+    targetModule.getMisfired = function(...)
+        if Toggles.NoMisfire and Toggles.NoMisfire.Value then
+            return false, false
+        end
+        if origGetMisfired then return origGetMisfired(...) end
+    end
+end
+
+local AIM_SPEED = 0.15 
+for _, obj in ipairs(getgc(true)) do
+    if type(obj) == "table" then
+        if rawget(obj, "ClassName") == "FireActionClient" and rawget(obj, "UpdateReticle") then
+            local originalUpdateReticle = obj.UpdateReticle
+            obj.UpdateReticle = function(self, progress, ...)
+                if Toggles.InstantAim and Toggles.InstantAim.Value then
+                    if self.aiming then
+                        self.customAimProgress = math.min(1, (self.customAimProgress or 0) + AIM_SPEED)
+                        local smoothProgress = math.sin(self.customAimProgress * (math.pi / 2))
+                        self.aimProgress = smoothProgress
+                        self.realAimTime = math.max(self.realAimTime or 0, smoothProgress)
+                        return originalUpdateReticle(self, smoothProgress, ...)
+                    else
+                        self.customAimProgress = 0
+                        return originalUpdateReticle(self, progress, ...)
+                    end
+                end
+                return originalUpdateReticle(self, progress, ...)
+            end
+        elseif rawget(obj, "shakeFiredShot") then
+            local originalShake = obj.shakeFiredShot
+            obj.shakeFiredShot = function(...)
+                if Toggles.NoRecoil and Toggles.NoRecoil.Value then return end
+                return originalShake(...)
+            end
+        elseif rawget(obj, "fireBProjectile") then
+            local originalFireBProjectile = obj.fireBProjectile
+            obj.fireBProjectile = function(velocity, position, weaponValue, spread, selfObj, ...)
+                if Toggles.NoSpread and Toggles.NoSpread.Value and selfObj and type(selfObj) == "table" and selfObj.muzzleAttachment then
+                    local cframe = selfObj.muzzleAttachment.WorldCFrame
+                    if selfObj.muzzleProjectileOffset then
+                        cframe = cframe * selfObj.muzzleProjectileOffset
+                    end
+                    local lookVector = cframe.LookVector
+                    local straightVelocity = lookVector * velocity.Magnitude
+                    local exactPosition = cframe.Position + lookVector
+                    return originalFireBProjectile(straightVelocity, exactPosition, weaponValue, 0, selfObj, ...)
+                end
+                return originalFireBProjectile(velocity, position, weaponValue, spread, selfObj, ...)
+            end
+        end
+    end
+end
+
 local function checkVisibility(startPos, endPos, character)
     local direction = endPos - startPos
     table.clear(dynamicFilterList)
@@ -276,7 +330,8 @@ local function checkVisibility(startPos, endPos, character)
     for i = 1, 5 do
         sharedVisibilityParams.FilterDescendantsInstances = dynamicFilterList
         local result = Workspace:Raycast(startPos, direction, sharedVisibilityParams)
-        if not result or result.Instance:IsDescendantOf(character) then return true end
+        if not result then return true end
+        if character and result.Instance:IsDescendantOf(character) then return true end
         if result.Instance.Transparency > 0.5 or not result.Instance.CanCollide then
             table.insert(dynamicFilterList, result.Instance)
         else
@@ -286,13 +341,12 @@ local function checkVisibility(startPos, endPos, character)
     return false
 end
 
-local function getClosestCharacterToMouse(mousePos, currentCamera, skipMultipoint)
+local function getClosestCharacterToMouse(mousePos, currentCamera)
     if not currentCamera then return nil, nil, nil end
     local fovEnabled = Toggles.FOVEnabled.Value
     local fovRadiusSq = Options.FOVRadius.Value * Options.FOVRadius.Value
-    local visibleCheck = Toggles.VisibleCheck.Value
-    local targetPlayers = Toggles.SilentAimEnabled.Value
-    if not targetPlayers then return nil, nil, nil end
+    local maxDistance = Options.SilentAimMaxDist.Value
+    if not Toggles.SilentAimEnabled.Value then return nil, nil, nil end
 
     local localChar = LocalPlayer.Character
     table.clear(filterList)
@@ -306,11 +360,13 @@ local function getClosestCharacterToMouse(mousePos, currentCamera, skipMultipoin
     elseif debrisFolder then
         table.insert(filterList, debrisFolder)
     end
-    sharedRayParams.FilterDescendantsInstances = filterList
+    
     local camCFramePos = currentCamera.CFrame.Position
 
-    for i, player in ipairs(Players:GetPlayers()) do
+    for _, player in ipairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
+        if LocalPlayer.Team and player.Team == LocalPlayer.Team then continue end
+        
         local character = player.Character
         if not character then continue end
         
@@ -319,17 +375,34 @@ local function getClosestCharacterToMouse(mousePos, currentCamera, skipMultipoin
         
         if not humanoid or not hrp or humanoid.Health <= 0 then continue end
 
-        if player.Team then
-            local ignoredTeams = Options.IgnoredTeams.Value
-            if ignoredTeams and ignoredTeams[player.Team.Name] then continue end
+        local immunityPenalty = 0
+        if humanoid.MaxHealth > 100 then
+            immunityPenalty = 5
         end
-
-        if Toggles.InvisibleCheck.Value then
-            local head = character:FindFirstChild("Head")
-            if head and head.Transparency >= 0.5 then continue end
+        if player:GetAttribute("FlagBearer") == true then
+            immunityPenalty = 5
         end
+        
+        table.insert(entitiesList, {character = character, hrp = hrp, priority = 3 - immunityPenalty})
+    end
 
-        table.insert(entitiesList, {character = character, hrp = hrp})
+    for obj in pairs(cachedTargets) do
+        if obj.Parent then
+            local primary = obj.PrimaryPart
+            if not primary then
+                for _, child in ipairs(obj:GetDescendants()) do
+                    if child:IsA("BasePart") then
+                        primary = child
+                        break
+                    end
+                end
+            end
+            if primary then
+                table.insert(entitiesList, {character = obj, hrp = primary, priority = 1})
+            end
+        else
+            cachedTargets[obj] = nil
+        end
     end
 
     for i = 1, #entitiesList do
@@ -337,55 +410,33 @@ local function getClosestCharacterToMouse(mousePos, currentCamera, skipMultipoin
         local targetPart = entity.hrp
         if not targetPart or not targetPart.Parent then continue end
 
-        local rootScreenPos, rootOnScreen = currentCamera:WorldToViewportPoint(targetPart.Position)
-        if fovEnabled and rootOnScreen then
-            local rx, ry = rootScreenPos.X - mousePos.X, rootScreenPos.Y - mousePos.Y
-            local rootDistSq = (rx * rx) + (ry * ry)
-            if rootDistSq > (fovRadiusSq * 3) then continue end
-        end
+        local point = targetPart.Position
+        if (point - camCFramePos).Magnitude > maxDistance then continue end
 
-        if not skipMultipoint then
-            local size = targetPart.Size * 0.8
-            local cf = targetPart.CFrame
-            local hx, hy, hz = size.X / 2, size.Y / 2, size.Z / 2
-            for _, offset in ipairs(MULTIPOINT_OFFSETS) do
-                local point = cf * Vector3.new(hx * offset.X, hy * offset.Y, hz * offset.Z)
-                local screenPos, onScreen = currentCamera:WorldToViewportPoint(point)
-                if onScreen then
-                    local px, py = screenPos.X - mousePos.X, screenPos.Y - mousePos.Y
-                    local distSq = (px * px) + (py * py)
-                    if not fovEnabled or distSq <= fovRadiusSq then
-                        table.insert(potentialTargetsList, {
-                            distanceSq = distSq, pos2D = Vector2.new(screenPos.X, screenPos.Y),
-                            part = targetPart, hitPos = point, character = entity.character
-                        })
-                    end
-                end
-            end
-        else
-            local point = targetPart.Position
-            local screenPos, onScreen = currentCamera:WorldToViewportPoint(point)
-            if onScreen then
-                local px, py = screenPos.X - mousePos.X, screenPos.Y - mousePos.Y
-                local distSq = (px * px) + (py * py)
-                if not fovEnabled or distSq <= fovRadiusSq then
-                    table.insert(potentialTargetsList, {
-                        distanceSq = distSq, pos2D = Vector2.new(screenPos.X, screenPos.Y),
-                        part = targetPart, hitPos = point, character = entity.character
-                    })
-                end
-            end
-        end
+        local screenPos, onScreen = currentCamera:WorldToViewportPoint(point)
+        if not onScreen then continue end
+
+        local px, py = screenPos.X - mousePos.X, screenPos.Y - mousePos.Y
+        local distSq = (px * px) + (py * py)
+
+        if fovEnabled and distSq > fovRadiusSq then continue end
+
+        table.insert(potentialTargetsList, {
+            distanceSq = distSq, pos2D = Vector2.new(screenPos.X, screenPos.Y),
+            part = targetPart, hitPos = point, character = entity.character, priority = entity.priority
+        })
     end
 
-    table.sort(potentialTargetsList, function(a, b) return a.distanceSq < b.distanceSq end)
+    table.sort(potentialTargetsList, function(a, b)
+        if a.priority ~= b.priority then
+            return a.priority > b.priority
+        end
+        return a.distanceSq < b.distanceSq
+    end)
 
     for i = 1, #potentialTargetsList do
         local target = potentialTargetsList[i]
-        if visibleCheck then
-            local isVisible = checkVisibility(camCFramePos, target.hitPos, target.character)
-            if isVisible then return target.pos2D, target.part, target.hitPos end
-        else
+        if not Toggles.VisibleCheck.Value or checkVisibility(camCFramePos, target.hitPos, target.character) then
             return target.pos2D, target.part, target.hitPos
         end
     end
@@ -401,17 +452,21 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
 
     local mousePos = UserInputService:GetMouseLocation()
     
-    if Toggles.SilentAimEnabled.Value then
-        local _, hitPart, hitPos = getClosestCharacterToMouse(mousePos, currentCamera, false)
-        silentAimTarget.part = hitPart
-        silentAimTarget.hitPos = hitPos
+    if Toggles.SilentAimEnabled and Toggles.SilentAimEnabled.Value then
+        local now = os.clock()
+        if now - lastTargetUpdateTime >= TARGET_UPDATE_INTERVAL then
+            lastTargetUpdateTime = now
+            local _, hitPart, hitPos = getClosestCharacterToMouse(mousePos, currentCamera)
+            silentAimTarget.part = hitPart
+            silentAimTarget.hitPos = hitPos
+        end
     else
         silentAimTarget.part = nil
         silentAimTarget.hitPos = nil
     end
 
-    local fovEnabled = Toggles.FOVEnabled.Value
-    local tracerEnabled = Toggles.TracerEnabled.Value
+    local fovEnabled = Toggles.FOVEnabled and Toggles.FOVEnabled.Value
+    local tracerEnabled = Toggles.TracerEnabled and Toggles.TracerEnabled.Value
 
     if fovEnabled then
         local outlineEnabled = Toggles.FOVOutline.Value
@@ -440,7 +495,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
     end
 
     if tracerEnabled then
-        local targetPos = getClosestCharacterToMouse(mousePos, currentCamera, true)
+        local targetPos = getClosestCharacterToMouse(mousePos, currentCamera)
         if targetPos then
             setDrawingProp(TracerLine, "Visible", true)
             setDrawingProp(TracerLine, "From", mousePos)
@@ -457,20 +512,23 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     
-    if Toggles.MeleeAuraEnable.Value and Toggles.MeleeAuraCircle.Value and root then
+    if Toggles.MeleeAuraEnable and Toggles.MeleeAuraEnable.Value and Toggles.MeleeAuraCircle and Toggles.MeleeAuraCircle.Value and root then
         local range = Options.MeleeAuraRange.Value
         local rootPos = root.Position - Vector3.new(0, 3, 0)
         local angle = (math.pi * 2) / 30
-        local points = {}
+        
         for i = 1, 30 do
             local currentAngle = angle * i
             local point3d = rootPos + Vector3.new(math.cos(currentAngle) * range, 0, math.sin(currentAngle) * range)
             local point2d, onScreen = currentCamera:WorldToViewportPoint(point3d)
-            points[i] = {pos = Vector2.new(point2d.X, point2d.Y), onScreen = onScreen}
+            if not meleeAuraPoints[i] then meleeAuraPoints[i] = {} end
+            meleeAuraPoints[i].pos = Vector2.new(point2d.X, point2d.Y)
+            meleeAuraPoints[i].onScreen = onScreen
         end
+        
         for i = 1, 30 do
-            local p1 = points[i]
-            local p2 = points[i == 30 and 1 or i + 1]
+            local p1 = meleeAuraPoints[i]
+            local p2 = meleeAuraPoints[i == 30 and 1 or i + 1]
             local line = MeleeRangeLines[i]
             if p1.onScreen or p2.onScreen then
                 setDrawingProp(line, "From", p1.pos)
@@ -485,7 +543,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
         for i = 1, 30 do setDrawingProp(MeleeRangeLines[i], "Visible", false) end
     end
     
-    if Toggles.MeleeAuraEnable.Value and Toggles.MeleeAuraTracer.Value and root and currentMeleeTargetRoot and currentMeleeTargetRoot.Parent then
+    if Toggles.MeleeAuraEnable and Toggles.MeleeAuraEnable.Value and Toggles.MeleeAuraTracer and Toggles.MeleeAuraTracer.Value and root and currentMeleeTargetRoot and currentMeleeTargetRoot.Parent then
         local rootPos, rootOnScreen = currentCamera:WorldToViewportPoint(root.Position)
         local targetPos, targetOnScreen = currentCamera:WorldToViewportPoint(currentMeleeTargetRoot.Position)
         if rootOnScreen or targetOnScreen then
@@ -503,24 +561,35 @@ end))
 
 table.insert(Connections, RunService.Heartbeat:Connect(function(deltaTime)
     if not ProjectileArray then 
-        locateProjectileArray()
+        local now = os.clock()
+        if now - lastArraySearch > 1 then
+            lastArraySearch = now
+            locateProjectileArray()
+        end
         return 
     end
-    if not Toggles.SilentAimEnabled.Value then return end
+    
+    if not Toggles.SilentAimEnabled or not Toggles.SilentAimEnabled.Value then return end
     local targetPart = silentAimTarget.part
     if not targetPart then return end
+    
+    local chance = Options.HitChance.Value
+    
     for _, projectile in pairs(ProjectileArray) do
         if type(projectile) == "table" and projectile.isLocal and projectile.position and projectile.velocity then
             local currentSpeed = math.min(projectile.velocity.Magnitude, 999)
             if currentSpeed > 1 then
-                local targetDirection = (targetPart.Position - projectile.position).Unit
-                local gravityCompensation = Vector3.new(0, 64, 0) * deltaTime
-                projectile.velocity = (targetDirection * currentSpeed) + gravityCompensation
+                if math.random(1, 100) <= chance then
+                    local targetDirection = (targetPart.Position - projectile.position).Unit
+                    local gravityCompensation = Vector3.new(0, 64, 0) * deltaTime
+                    projectile.velocity = (targetDirection * currentSpeed) + gravityCompensation
+                end
             end
         end
     end
 end))
 
+local validTargets = {}
 local auraTask = task.spawn(function()
     while true do
         local delay = Options.MeleeAuraDelay and Options.MeleeAuraDelay.Value or 0.5
@@ -537,10 +606,11 @@ local auraTask = task.spawn(function()
         end
         local origin = root.Position
         local range = Options.MeleeAuraRange.Value
-        local validTargets = {}
-        local localTeam = LocalPlayer.Team
+        
+        table.clear(validTargets)
+        
         for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and player.Team ~= localTeam then
+            if player ~= LocalPlayer and (not LocalPlayer.Team or player.Team ~= LocalPlayer.Team) then
                 local pChar = player.Character
                 if pChar then
                     local hum = pChar:FindFirstChildWhichIsA("Humanoid")
@@ -548,9 +618,13 @@ local auraTask = task.spawn(function()
                     if hum and targetRoot and hum.Health > 0 then
                         local dist = (targetRoot.Position - origin).Magnitude
                         if dist <= range then
+                            local priority = 3
+                            if hum.MaxHealth > 100 or player:GetAttribute("FlagBearer") == true then
+                                priority = -2
+                            end
                             table.insert(validTargets, {
                                 Player = player, Humanoid = hum, Root = targetRoot,
-                                Health = hum.Health, IsModel = false
+                                Health = hum.Health, IsModel = false, Priority = priority
                             })
                         end
                     end
@@ -560,12 +634,20 @@ local auraTask = task.spawn(function()
         if WeaponsTargetsClient then
             for obj in pairs(cachedTargets) do
                 if obj.Parent then
-                    local primary = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+                    local primary = obj.PrimaryPart
+                    if not primary then
+                        for _, child in ipairs(obj:GetDescendants()) do
+                            if child:IsA("BasePart") then
+                                primary = child
+                                break
+                            end
+                        end
+                    end
                     if primary then
                         local dist = (primary.Position - origin).Magnitude
                         if dist <= range then
                             table.insert(validTargets, {
-                                Object = obj, Root = primary, Health = 100, IsModel = true
+                                Object = obj, Root = primary, Health = 100, IsModel = true, Priority = 1
                             })
                         end
                     end
@@ -575,11 +657,18 @@ local auraTask = task.spawn(function()
             end
         end
         if #validTargets > 0 then
-            if Toggles.MeleeAuraPriorityLow.Value then
-                table.sort(validTargets, function(a, b) return a.Health < b.Health end)
-            elseif Toggles.MeleeAuraPriorityHigh.Value then
-                table.sort(validTargets, function(a, b) return a.Health > b.Health end)
-            end
+            table.sort(validTargets, function(a, b)
+                if a.Priority ~= b.Priority then
+                    return a.Priority > b.Priority
+                end
+                if Toggles.MeleeAuraPriorityLow.Value then
+                    return a.Health < b.Health
+                elseif Toggles.MeleeAuraPriorityHigh.Value then
+                    return a.Health > b.Health
+                end
+                return false
+            end)
+            
             currentMeleeTargetRoot = validTargets[1].Root
             local currentDamage = Toggles.CustomDamageToggle.Value and Options.CustomDamageAmount.Value or 50
             for _, target in ipairs(validTargets) do
