@@ -204,14 +204,14 @@ local MiscTabbox = Tabs.Misc:AddLeftTabbox()
 local WeaponTab = MiscTabbox:AddTab('Weapon')
 local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
 
-SilentAimGroup:AddToggle('SilentAimEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('SilentAimKeybind', { Default = 'NONE', SyncToggleState = true, Mode = 'Toggle', Text = 'Silent Aim' })
+SilentAimGroup:AddToggle('SilentAimEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('SilentAimKeybind', { Default = '-', SyncToggleState = true, Mode = 'Toggle', Text = 'Silent Aim' })
 SilentAimGroup:AddToggle('StickyAim', { Text = 'Sticky Aim', Default = false })
 SilentAimGroup:AddToggle('VisibleCheck', { Text = 'Visible Check', Default = true })
 SilentAimGroup:AddToggle('PrioritizeFlagBearers', { Text = 'Prioritize Flag Bearers', Default = false })
 SilentAimGroup:AddSlider('SilentAimMaxDist', { Text = 'Max Distance', Default = 1000, Min = 1, Max = 1000, Rounding = 0, Suffix = ' st' })
 SilentAimGroup:AddSlider('HitChance', { Text = 'Hit Chance', Default = 100, Min = 0, Max = 100, Rounding = 0, Suffix = '%' })
 
-MeleeGroup:AddToggle('MeleeAuraEnable', { Text = 'Enable', Default = false })
+MeleeGroup:AddToggle('MeleeAuraEnable', { Text = 'Enable', Default = false }):AddKeyPicker('MeleeAuraKeybind', { Default = '-', SyncToggleState = true, Mode = 'Toggle', Text = 'Melee Aura' })
 MeleeGroup:AddSlider('MeleeAuraRange', { Text = 'Range', Default = 12, Min = 5, Max = 30, Rounding = 1, Suffix = ' st' })
 MeleeGroup:AddSlider('MeleeAuraDelay', { Text = 'Delay', Default = 0.5, Min = 0.5, Max = 1, Rounding = 2, Suffix = ' s' })
 MeleeGroup:AddToggle('MeleeAuraPriorityLow', { Text = 'Prioritize Low Health', Default = false }):OnChanged(function()
@@ -229,7 +229,7 @@ MeleeGroup:AddSlider('CustomDamageAmount', { Text = 'Damage Amount', Default = 5
 MeleeGroup:AddToggle('MeleeAuraCircle', { Text = 'Show Range Circle', Default = false }):AddColorPicker('RangeCircleColor', { Default = Color3.new(1, 1, 1), Title = 'Range Circle Color' })
 MeleeGroup:AddToggle('MeleeAuraTracer', { Text = 'Show Target Tracer', Default = false }):AddColorPicker('MeleeTracerColor', { Default = Color3.new(1, 0, 0), Title = 'Target Tracer Color' })
 
-FOVGroup:AddToggle('FOVEnabled', { Text = 'Enable', Default = false })
+FOVGroup:AddToggle('FOVEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('FOVKeybind', { Default = '-', SyncToggleState = true, Mode = 'Toggle', Text = 'FOV' })
 local FOVOutlineToggle = FOVGroup:AddToggle('FOVOutline', { Text = 'Outline', Default = false })
 FOVOutlineToggle:AddColorPicker('FOVOutlineColor', { Default = Library.AccentColor })
 local FOVFilledToggle = FOVGroup:AddToggle('FOVFilled', { Text = 'Filled', Default = false })
@@ -239,7 +239,8 @@ FOVGroup:AddSlider('FOVThickness', { Text = 'Thickness', Default = 1, Min = 1, M
 FOVGroup:AddSlider('FOVNumSides', { Text = 'Num Sides', Default = 32, Min = 10, Max = 60, Rounding = 0 })
 FOVGroup:AddSlider('FOVFilledTransparency', { Text = 'Filled Transparency', Default = 0.5, Min = 0, Max = 1, Rounding = 2 })
 
-TracerGroup:AddToggle('TracerEnabled', { Text = 'Enable', Default = false }):AddColorPicker('TracerColor', { Default = Library.AccentColor })
+TracerGroup:AddToggle('TracerEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('TracerKeybind', { Default = '-', SyncToggleState = true, Mode = 'Toggle', Text = 'Tracer' })
+TracerGroup:AddColorPicker('TracerColor', { Default = Library.AccentColor })
 TracerGroup:AddSlider('TracerThickness', { Text = 'Thickness', Default = 1, Min = 1, Max = 10, Rounding = 0 })
 
 WeaponTab:AddToggle('NoRecoil', { Text = 'No Recoil', Default = false })
