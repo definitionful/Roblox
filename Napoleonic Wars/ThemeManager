@@ -4,7 +4,7 @@ local ThemeManager = {}
 ThemeManager.Folder = 'LinoriaLibSettings'
 ThemeManager.Library = nil
 ThemeManager.BuiltInThemes = {
-	['Default'] 		= { 1, {FontColor="f5f2eb", MainColor="191f2d", AccentColor="d4af37", BackgroundColor="0f121a", OutlineColor="a38327"} },
+	['Default'] 		= { 1, {FontColor="f0f4f8", MainColor="1b1e26", AccentColor="00e5ff", BackgroundColor="111318", OutlineColor="2b313D"} },
 	['BBot'] 			= { 2, {FontColor="ffffff", MainColor="1e1e1e", AccentColor="7e48a3", BackgroundColor="232323", OutlineColor="141414"} },
 	['Fatality']		= { 3, {FontColor="ffffff", MainColor="1e1842", AccentColor="c50754", BackgroundColor="191335", OutlineColor="3c355d"} },
 	['Jester'] 			= { 4, {FontColor="ffffff", MainColor="242424", AccentColor="db4467", BackgroundColor="1c1c1c", OutlineColor="373737"} },
