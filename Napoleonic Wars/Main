@@ -16,27 +16,20 @@ local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-local TextService = game:GetService("TextService")
 local LocalPlayer = Players.LocalPlayer
 
 local ProjectileArray = nil
-local lastArraySearch = 0
 local lastTargetUpdateTime = 0
-local TARGET_UPDATE_INTERVAL = 1 / 20
-
-local function resolveTargetModule()
-    for _, descendant in ipairs(TextService:GetDescendants()) do
-        if descendant:IsA("ModuleScript") then
-            local success, result = pcall(require, descendant)
-            if success and type(result) == "table" and type(rawget(result, "getMisfired")) == "function" then
-                return result
-            end
-        end
-    end
-    return nil
-end
-
-local targetModule = resolveTargetModule()
+local lastProjectileScan = 0
+local TARGET_UPDATE_INTERVAL = 0.05
+local AIM_SPEED = 0.15
+local cachedTargets = {}
+local Connections = {}
+local drawingPropCache = {}
+local meleeAuraPoints = {}
+local debrisFolder = Workspace:FindFirstChild("Debris")
+local silentAimTarget = { part = nil, hitPos = nil, character = nil, pos2D = nil }
+local currentMeleeTargetRoot = nil
 
 for _, inst in ipairs(getinstances()) do
     if inst.ClassName == "ModuleScript" and inst.Name == "UtilityIncidentsClient" then
@@ -44,7 +37,16 @@ for _, inst in ipairs(getinstances()) do
         if success and type(util) == "table" then
             for key, val in pairs(util) do
                 if type(val) == "function" then
-                    hookfunction(util[key], function() end)
+                    local originalFunction
+                    originalFunction = hookfunction(util[key], newcclosure(function(...)
+                        for _, arg in ipairs({...}) do
+                            local flag = tostring(arg)
+                            if flag == "muzzleChanges" or flag == "rayCurve" or flag == "rayOffset" or flag == "projectileVelocity" or flag == "fudgeTrap" or flag == "dealMeleeIntercept" then
+                                return
+                            end
+                        end
+                        return originalFunction(...)
+                    end))
                 end
             end
         end
@@ -65,35 +67,16 @@ local function locateProjectileArray()
 end
 
 local function findModuleBySignature(signatures)
-    if getgc then
-        for _, item in ipairs(getgc(true)) do
-            if type(item) == "table" then
-                local match = true
-                for _, sig in ipairs(signatures) do
-                    if type(rawget(item, sig)) ~= "function" then
-                        match = false
-                        break
-                    end
-                end
-                if match then return item end
-            end
-        end
-    end
-    if getloadedmodules then
-        for _, mod in ipairs(getloadedmodules()) do
-            if typeof(mod) == "Instance" and mod:IsA("ModuleScript") then
-                local ok, res = pcall(require, mod)
-                if ok and type(res) == "table" then
-                    local match = true
-                    for _, sig in ipairs(signatures) do
-                        if type(rawget(res, sig)) ~= "function" then
-                            match = false
-                            break
-                        end
-                    end
-                    if match then return res end
+    for _, item in ipairs(getgc(true)) do
+        if type(item) == "table" then
+            local match = true
+            for _, sig in ipairs(signatures) do
+                if type(rawget(item, sig)) ~= "function" then
+                    match = false
+                    break
                 end
             end
+            if match then return item end
         end
     end
     return nil
@@ -101,8 +84,6 @@ end
 
 local WeaponsDamageClient = findModuleBySignature({"dealMelee", "dealMeleeToHorse", "getHorseByModelPart"})
 local WeaponsTargetsClient = findModuleBySignature({"hitTarget"})
-local cachedTargets = {}
-local Connections = {}
 
 for _, obj in ipairs(Workspace:GetDescendants()) do
     if obj.Name == "TargetModel" and obj:IsA("Model") then
@@ -121,8 +102,6 @@ table.insert(Connections, Workspace.DescendantRemoving:Connect(function(obj)
         cachedTargets[obj] = nil
     end
 end))
-
-local drawingPropCache = {}
 
 local function setDrawingProp(drawing, prop, value)
     if not drawingPropCache[drawing] then drawingPropCache[drawing] = {} end
@@ -170,15 +149,6 @@ setDrawingProp(MeleeTargetTracer, "Visible", false)
 local sharedVisibilityParams = RaycastParams.new()
 sharedVisibilityParams.FilterType = Enum.RaycastFilterType.Exclude
 
-local filterList = {}
-local dynamicFilterList = {}
-local entitiesList = {}
-local potentialTargetsList = {}
-local meleeAuraPoints = {}
-
-local debrisFolder = Workspace:FindFirstChild("Debris")
-local rayExceptionFolder = debrisFolder and debrisFolder:FindFirstChild("RayException")
-
 local Window = Library:CreateWindow({
     Title = 'Napoleonic Wars',
     Center = true,
@@ -205,10 +175,11 @@ local WeaponTab = MiscTabbox:AddTab('Weapon')
 local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
 
 SilentAimGroup:AddToggle('SilentAimEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('SilentAimKeybind', { Default = '-', SyncToggleState = true, Mode = 'Toggle', Text = 'Silent Aim' })
+SilentAimGroup:AddDropdown('SilentAimHitpart', { Values = { 'HumanoidRootPart', 'Head' }, Default = 1, Multi = false, Text = 'Hitpart' })
 SilentAimGroup:AddToggle('StickyAim', { Text = 'Sticky Aim', Default = false })
-SilentAimGroup:AddToggle('VisibleCheck', { Text = 'Visible Check', Default = true })
+SilentAimGroup:AddToggle('VisibleCheck', { Text = 'Visible Check', Default = false })
 SilentAimGroup:AddToggle('PrioritizeFlagBearers', { Text = 'Prioritize Flag Bearers', Default = false })
-SilentAimGroup:AddSlider('SilentAimMaxDist', { Text = 'Max Distance', Default = 1000, Min = 1, Max = 1000, Rounding = 0, Suffix = ' st' })
+SilentAimGroup:AddSlider('SilentAimMaxDist', { Text = 'Max Distance', Default = 4700, Min = 1, Max = 4700, Rounding = 0, Suffix = ' st' })
 SilentAimGroup:AddSlider('HitChance', { Text = 'Hit Chance', Default = 100, Min = 0, Max = 100, Rounding = 0, Suffix = '%' })
 
 MeleeGroup:AddToggle('MeleeAuraEnable', { Text = 'Enable', Default = false }):AddKeyPicker('MeleeAuraKeybind', { Default = '-', SyncToggleState = true, Mode = 'Toggle', Text = 'Melee Aura' })
@@ -229,24 +200,22 @@ MeleeGroup:AddSlider('CustomDamageAmount', { Text = 'Damage Amount', Default = 5
 MeleeGroup:AddToggle('MeleeAuraCircle', { Text = 'Show Range Circle', Default = false }):AddColorPicker('RangeCircleColor', { Default = Color3.new(1, 1, 1), Title = 'Range Circle Color' })
 MeleeGroup:AddToggle('MeleeAuraTracer', { Text = 'Show Target Tracer', Default = false }):AddColorPicker('MeleeTracerColor', { Default = Color3.new(1, 0, 0), Title = 'Target Tracer Color' })
 
-FOVGroup:AddToggle('FOVEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('FOVKeybind', { Default = '-', SyncToggleState = true, Mode = 'Toggle', Text = 'FOV' })
-local FOVOutlineToggle = FOVGroup:AddToggle('FOVOutline', { Text = 'Outline', Default = false })
-FOVOutlineToggle:AddColorPicker('FOVOutlineColor', { Default = Library.AccentColor })
-local FOVFilledToggle = FOVGroup:AddToggle('FOVFilled', { Text = 'Filled', Default = false })
-FOVFilledToggle:AddColorPicker('FOVFilledColor', { Default = Library.AccentColor })
+FOVGroup:AddToggle('FOVEnabled', { Text = 'Enable', Default = false })
+FOVGroup:AddToggle('FOVOutline', { Text = 'Outline', Default = false }):AddColorPicker('FOVOutlineColor', { Default = Library.AccentColor })
+FOVGroup:AddToggle('FOVFilled', { Text = 'Filled', Default = false }):AddColorPicker('FOVFilledColor', { Default = Library.AccentColor })
 FOVGroup:AddSlider('FOVRadius', { Text = 'Radius', Default = 100, Min = 0, Max = 600, Rounding = 0 })
 FOVGroup:AddSlider('FOVThickness', { Text = 'Thickness', Default = 1, Min = 1, Max = 10, Rounding = 0 })
 FOVGroup:AddSlider('FOVNumSides', { Text = 'Num Sides', Default = 32, Min = 10, Max = 60, Rounding = 0 })
 FOVGroup:AddSlider('FOVFilledTransparency', { Text = 'Filled Transparency', Default = 0.5, Min = 0, Max = 1, Rounding = 2 })
 
-TracerGroup:AddToggle('TracerEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('TracerKeybind', { Default = '-', SyncToggleState = true, Mode = 'Toggle', Text = 'Tracer' })
-TracerGroup:AddColorPicker('TracerColor', { Default = Library.AccentColor })
+TracerGroup:AddToggle('TracerEnabled', { Text = 'Enable', Default = false }):AddColorPicker('TracerColor', { Default = Library.AccentColor })
 TracerGroup:AddSlider('TracerThickness', { Text = 'Thickness', Default = 1, Min = 1, Max = 10, Rounding = 0 })
 
 WeaponTab:AddToggle('NoRecoil', { Text = 'No Recoil', Default = false })
 WeaponTab:AddToggle('NoSpread', { Text = 'No Spread', Default = false })
 WeaponTab:AddToggle('InstantAim', { Text = 'Instant Aim', Default = false })
-WeaponTab:AddToggle('NoMisfire', { Text = 'No Misfire', Default = false })
+WeaponTab:AddToggle('NoSmoke', { Text = 'No Smoke', Default = false })
+WeaponTab:AddToggle('NoScreenEffects', { Text = 'No Screen Effects', Default = false })
 
 MenuGroup:AddToggle('WatermarkToggle', { Text = 'Watermark', Default = false }):OnChanged(function()
     Library:SetWatermarkVisibility(Toggles.WatermarkToggle.Value)
@@ -257,6 +226,7 @@ end)
 
 Library:SetWatermark('Napoleonic Wars Client')
 Library:SetWatermarkVisibility(false)
+
 ThemeManager:SetLibrary(Library)
 SaveManager:SetLibrary(Library)
 ThemeManager:SetFolder('Napoleonic Wars')
@@ -271,23 +241,12 @@ Options.AccentColor:OnChanged(function()
     Options.TracerColor:SetValueRGB(Options.AccentColor.Value)
 end)
 
-if targetModule then
-    local origGetMisfired = targetModule.getMisfired
-    targetModule.getMisfired = function(...)
-        if Toggles.NoMisfire and Toggles.NoMisfire.Value then
-            return false, false
-        end
-        if origGetMisfired then return origGetMisfired(...) end
-    end
-end
-
-local AIM_SPEED = 0.15 
 for _, obj in ipairs(getgc(true)) do
     if type(obj) == "table" then
         if rawget(obj, "ClassName") == "FireActionClient" and rawget(obj, "UpdateReticle") then
             local originalUpdateReticle = obj.UpdateReticle
             obj.UpdateReticle = function(self, progress, ...)
-                if Toggles.InstantAim and Toggles.InstantAim.Value then
+                if Toggles.InstantAim.Value then
                     if self.aiming then
                         self.customAimProgress = math.min(1, (self.customAimProgress or 0) + AIM_SPEED)
                         local smoothProgress = math.sin(self.customAimProgress * (math.pi / 2))
@@ -304,23 +263,47 @@ for _, obj in ipairs(getgc(true)) do
         elseif rawget(obj, "shakeFiredShot") then
             local originalShake = obj.shakeFiredShot
             obj.shakeFiredShot = function(...)
-                if Toggles.NoRecoil and Toggles.NoRecoil.Value then return end
+                if Toggles.NoRecoil.Value then return end
                 return originalShake(...)
             end
         elseif rawget(obj, "fireBProjectile") then
             local originalFireBProjectile = obj.fireBProjectile
             obj.fireBProjectile = function(velocity, position, weaponValue, spread, selfObj, ...)
-                if Toggles.NoSpread and Toggles.NoSpread.Value and selfObj and type(selfObj) == "table" and selfObj.muzzleAttachment then
-                    local cframe = selfObj.muzzleAttachment.WorldCFrame
-                    if selfObj.muzzleProjectileOffset then
-                        cframe = cframe * selfObj.muzzleProjectileOffset
+                if Toggles.NoSpread.Value and selfObj and type(selfObj) == "table" and selfObj.muzzleCFrame then
+                    if Toggles.SilentAimEnabled.Value and silentAimTarget and silentAimTarget.part then
+                        return originalFireBProjectile(velocity, position, weaponValue, 0, selfObj, ...)
+                    else
+                        local straightVelocity = selfObj.muzzleCFrame.LookVector * velocity.Magnitude
+                        return originalFireBProjectile(straightVelocity, selfObj.muzzleCFrame.Position, weaponValue, 0, selfObj, ...)
                     end
-                    local lookVector = cframe.LookVector
-                    local straightVelocity = lookVector * velocity.Magnitude
-                    local exactPosition = cframe.Position + lookVector
-                    return originalFireBProjectile(straightVelocity, exactPosition, weaponValue, 0, selfObj, ...)
                 end
                 return originalFireBProjectile(velocity, position, weaponValue, spread, selfObj, ...)
+            end
+        end
+
+        if rawget(obj, "addCannonScreenSmoke") and rawget(obj, "projectileLanded") then
+            local origCannonSmoke = obj.addCannonScreenSmoke
+            obj.addCannonScreenSmoke = function(...)
+                if Toggles.NoScreenEffects.Value then return end
+                return origCannonSmoke(...)
+            end
+
+            local origPlayerFired = obj.playerFiredGun
+            obj.playerFiredGun = function(...)
+                if Toggles.NoScreenEffects.Value then return end
+                return origPlayerFired(...)
+            end
+
+            local origNearbyDeath = obj.nearbyDeath
+            obj.nearbyDeath = function(...)
+                if Toggles.NoScreenEffects.Value then return end
+                return origNearbyDeath(...)
+            end
+
+            local origProjLanded = obj.projectileLanded
+            obj.projectileLanded = function(...)
+                if Toggles.NoScreenEffects.Value then return end
+                return origProjLanded(...)
             end
         end
     end
@@ -328,9 +311,11 @@ end
 
 local function checkVisibility(startPos, endPos, character)
     local direction = endPos - startPos
-    table.clear(dynamicFilterList)
-    for i = 1, #filterList do dynamicFilterList[i] = filterList[i] end
-    for i = 1, 5 do
+    local dynamicFilterList = {Workspace.CurrentCamera}
+    if LocalPlayer.Character then table.insert(dynamicFilterList, LocalPlayer.Character) end
+    if debrisFolder then table.insert(dynamicFilterList, debrisFolder) end
+
+    for _ = 1, 5 do
         sharedVisibilityParams.FilterDescendantsInstances = dynamicFilterList
         local result = Workspace:Raycast(startPos, direction, sharedVisibilityParams)
         if not result then return true end
@@ -349,84 +334,54 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
     local fovEnabled = Toggles.FOVEnabled.Value
     local fovRadiusSq = Options.FOVRadius.Value * Options.FOVRadius.Value
     local maxDistance = Options.SilentAimMaxDist.Value
-
-    local localChar = LocalPlayer.Character
-    table.clear(filterList)
-    table.clear(entitiesList)
-    table.clear(potentialTargetsList)
-
-    table.insert(filterList, currentCamera)
-    if localChar then table.insert(filterList, localChar) end
-    if rayExceptionFolder then
-        table.insert(filterList, rayExceptionFolder)
-    elseif debrisFolder then
-        table.insert(filterList, debrisFolder)
-    end
     
+    local entitiesList = {}
+    local potentialTargetsList = {}
+
     local camCFramePos = currentCamera.CFrame.Position
+    local hitpartName = Options.SilentAimHitpart.Value or "HumanoidRootPart"
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
         if LocalPlayer.Team and player.Team == LocalPlayer.Team then continue end
-        
         local character = player.Character
         if not character then continue end
-        
         local humanoid = character:FindFirstChildOfClass("Humanoid")
-        local hrp = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart or character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
-        
-        if not humanoid or not hrp or humanoid.Health <= 0 then continue end
+        local targetPart = character:FindFirstChild(hitpartName) or character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart
+        if not humanoid or not targetPart or humanoid.Health <= 0 then continue end
+        if humanoid.MaxHealth > 100 then continue end
 
         local priority = 3
-        if humanoid.MaxHealth > 100 then
-            priority = priority - 5
-        end
         if player:GetAttribute("FlagBearer") == true then
-            if Toggles.PrioritizeFlagBearers and Toggles.PrioritizeFlagBearers.Value then
+            if Toggles.PrioritizeFlagBearers.Value then
                 priority = priority + 10
             else
                 priority = priority - 5
             end
         end
-        
-        table.insert(entitiesList, {character = character, hrp = hrp, priority = priority})
+        table.insert(entitiesList, {character = character, part = targetPart, priority = priority})
     end
 
     for obj in pairs(cachedTargets) do
         if obj.Parent then
-            local primary = obj.PrimaryPart
-            if not primary then
-                for _, child in ipairs(obj:GetDescendants()) do
-                    if child:IsA("BasePart") then
-                        primary = child
-                        break
-                    end
-                end
+            local targetBag = obj:FindFirstChild("Bag")
+            if targetBag then
+                table.insert(entitiesList, {character = obj, part = targetBag, priority = 1})
             end
-            if primary then
-                table.insert(entitiesList, {character = obj, hrp = primary, priority = 1})
-            end
-        else
-            cachedTargets[obj] = nil
         end
     end
 
     for i = 1, #entitiesList do
         local entity = entitiesList[i]
-        local targetPart = entity.hrp
+        local targetPart = entity.part
         if not targetPart or not targetPart.Parent then continue end
-
         local point = targetPart.Position
         if (point - camCFramePos).Magnitude > maxDistance then continue end
-
         local screenPos, onScreen = currentCamera:WorldToViewportPoint(point)
         if not onScreen then continue end
-
         local px, py = screenPos.X - mousePos.X, screenPos.Y - mousePos.Y
         local distSq = (px * px) + (py * py)
-
         if fovEnabled and distSq > fovRadiusSq then continue end
-
         table.insert(potentialTargetsList, {
             distanceSq = distSq, pos2D = Vector2.new(screenPos.X, screenPos.Y),
             part = targetPart, hitPos = point, character = entity.character, priority = entity.priority
@@ -446,20 +401,17 @@ local function getClosestCharacterToMouse(mousePos, currentCamera)
             return target.pos2D, target.part, target.hitPos, target.character
         end
     end
+
     return nil, nil, nil, nil
 end
-
-local silentAimTarget = { part = nil, hitPos = nil, character = nil, pos2D = nil }
-local currentMeleeTargetRoot = nil
 
 table.insert(Connections, RunService.RenderStepped:Connect(function()
     local currentCamera = Workspace.CurrentCamera
     if not currentCamera then return end
-
     local mousePos = UserInputService:GetMouseLocation()
-    local silentAimEnabled = Toggles.SilentAimEnabled and Toggles.SilentAimEnabled.Value
-    local tracerEnabled = Toggles.TracerEnabled and Toggles.TracerEnabled.Value
-    local fovEnabled = Toggles.FOVEnabled and Toggles.FOVEnabled.Value
+    local silentAimEnabled = Toggles.SilentAimEnabled.Value
+    local tracerEnabled = Toggles.TracerEnabled.Value
+    local fovEnabled = Toggles.FOVEnabled.Value
     local requireTargeting = silentAimEnabled or tracerEnabled
 
     if requireTargeting then
@@ -467,13 +419,11 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
         if now - lastTargetUpdateTime >= TARGET_UPDATE_INTERVAL then
             lastTargetUpdateTime = now
             local keepTarget = false
-            
-            if Toggles.StickyAim and Toggles.StickyAim.Value and silentAimTarget.character then
+            if Toggles.StickyAim.Value and silentAimTarget.character then
                 local char = silentAimTarget.character
                 local hrp = silentAimTarget.part
                 local hum = char:FindFirstChildOfClass("Humanoid")
-                
-                if char.Parent and hrp and hrp.Parent and (not hum or hum.Health > 0) then
+                if char.Parent and hrp and hrp.Parent and (not hum or (hum.Health > 0 and hum.MaxHealth <= 100)) then
                     local point = hrp.Position
                     local camPos = currentCamera.CFrame.Position
                     if (point - camPos).Magnitude <= Options.SilentAimMaxDist.Value then
@@ -482,7 +432,6 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
                             local px, py = screenPos.X - mousePos.X, screenPos.Y - mousePos.Y
                             local distSq = (px * px) + (py * py)
                             local fovRadiusSq = Options.FOVRadius.Value * Options.FOVRadius.Value
-                            
                             if (not fovEnabled) or (distSq <= fovRadiusSq) then
                                 if not Toggles.VisibleCheck.Value or checkVisibility(camPos, point, char) then
                                     keepTarget = true
@@ -494,7 +443,6 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
                     end
                 end
             end
-
             if not keepTarget then
                 local pos2D, hitPart, hitPos, hitChar = getClosestCharacterToMouse(mousePos, currentCamera)
                 silentAimTarget.part = hitPart
@@ -515,8 +463,10 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
         local filledEnabled = Toggles.FOVFilled.Value
         local fovRadius = Options.FOVRadius.Value
         local fovNumSides = Options.FOVNumSides.Value
+
         setDrawingProp(FOVCircle, "Visible", outlineEnabled)
         setDrawingProp(FOVFilledCircle, "Visible", filledEnabled)
+
         if outlineEnabled then
             setDrawingProp(FOVCircle, "Position", mousePos)
             setDrawingProp(FOVCircle, "Radius", fovRadius)
@@ -548,12 +498,11 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
 
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
-    
-    if Toggles.MeleeAuraEnable and Toggles.MeleeAuraEnable.Value and Toggles.MeleeAuraCircle and Toggles.MeleeAuraCircle.Value and root then
+
+    if Toggles.MeleeAuraEnable.Value and Toggles.MeleeAuraCircle.Value and root then
         local range = Options.MeleeAuraRange.Value
         local rootPos = root.Position - Vector3.new(0, 3, 0)
         local angle = 6.283185307179586 / 30
-        
         for i = 1, 30 do
             local currentAngle = angle * i
             local point3d = rootPos + Vector3.new(math.cos(currentAngle) * range, 0, math.sin(currentAngle) * range)
@@ -562,7 +511,6 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
             meleeAuraPoints[i].pos = Vector2.new(point2d.X, point2d.Y)
             meleeAuraPoints[i].onScreen = onScreen
         end
-        
         for i = 1, 30 do
             local p1 = meleeAuraPoints[i]
             local p2 = meleeAuraPoints[i == 30 and 1 or i + 1]
@@ -579,8 +527,8 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
     else
         for i = 1, 30 do setDrawingProp(MeleeRangeLines[i], "Visible", false) end
     end
-    
-    if Toggles.MeleeAuraEnable and Toggles.MeleeAuraEnable.Value and Toggles.MeleeAuraTracer and Toggles.MeleeAuraTracer.Value and root and currentMeleeTargetRoot and currentMeleeTargetRoot.Parent then
+
+    if Toggles.MeleeAuraEnable.Value and Toggles.MeleeAuraTracer.Value and root and currentMeleeTargetRoot and currentMeleeTargetRoot.Parent then
         local rootPos, rootOnScreen = currentCamera:WorldToViewportPoint(root.Position)
         local targetPos, targetOnScreen = currentCamera:WorldToViewportPoint(currentMeleeTargetRoot.Position)
         if rootOnScreen or targetOnScreen then
@@ -599,24 +547,26 @@ end))
 table.insert(Connections, RunService.Heartbeat:Connect(function(deltaTime)
     if not ProjectileArray then 
         local now = os.clock()
-        if now - lastArraySearch > 1 then
-            lastArraySearch = now
+        if now - lastProjectileScan > 1 then
+            lastProjectileScan = now
             locateProjectileArray()
         end
         return 
     end
-    
-    if not Toggles.SilentAimEnabled or not Toggles.SilentAimEnabled.Value then return end
+    if not Toggles.SilentAimEnabled.Value then return end
+
     local targetPart = silentAimTarget.part
     if not targetPart then return end
-    
     local chance = Options.HitChance.Value
-    
+
     for _, projectile in pairs(ProjectileArray) do
         if type(projectile) == "table" and projectile.isLocal and projectile.position and projectile.velocity then
             local currentSpeed = math.min(projectile.velocity.Magnitude, 999)
             if currentSpeed > 1 then
-                if math.random(1, 100) <= chance then
+                if rawget(projectile, "_silentAimHit") == nil then
+                    rawset(projectile, "_silentAimHit", math.random(1, 100) <= chance)
+                end
+                if rawget(projectile, "_silentAimHit") then
                     local targetDirection = (targetPart.Position - projectile.position).Unit
                     local gravityCompensation = Vector3.new(0, 64, 0) * deltaTime
                     projectile.velocity = (targetDirection * currentSpeed) + gravityCompensation
@@ -626,26 +576,28 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(deltaTime)
     end
 end))
 
-local validTargets = {}
 local auraTask = task.spawn(function()
     while true do
         local delay = Options.MeleeAuraDelay and Options.MeleeAuraDelay.Value or 0.5
         task.wait(delay)
-        if not Toggles.MeleeAuraEnable or not Toggles.MeleeAuraEnable.Value or not WeaponsDamageClient then 
+
+        if not Toggles.MeleeAuraEnable.Value or not WeaponsDamageClient then 
             currentMeleeTargetRoot = nil
             continue 
         end
+
         local char = LocalPlayer.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not root then 
+        local myHum = char and char:FindFirstChildOfClass("Humanoid")
+        if not root or not myHum or myHum.Health <= 0 then 
             currentMeleeTargetRoot = nil
             continue 
         end
+
         local origin = root.Position
         local range = Options.MeleeAuraRange.Value
-        
-        table.clear(validTargets)
-        
+        local validTargets = {}
+
         for _, player in ipairs(Players:GetPlayers()) do
             if player ~= LocalPlayer and (not LocalPlayer.Team or player.Team ~= LocalPlayer.Team) then
                 local pChar = player.Character
@@ -653,10 +605,11 @@ local auraTask = task.spawn(function()
                     local hum = pChar:FindFirstChildWhichIsA("Humanoid")
                     local targetRoot = pChar:FindFirstChild("HumanoidRootPart")
                     if hum and targetRoot and hum.Health > 0 then
+                        if hum.MaxHealth > 100 then continue end
                         local dist = (targetRoot.Position - origin).Magnitude
                         if dist <= range then
                             local priority = 3
-                            if hum.MaxHealth > 100 or player:GetAttribute("FlagBearer") == true then
+                            if player:GetAttribute("FlagBearer") == true then
                                 priority = -2
                             end
                             table.insert(validTargets, {
@@ -668,31 +621,23 @@ local auraTask = task.spawn(function()
                 end
             end
         end
+
         if WeaponsTargetsClient then
             for obj in pairs(cachedTargets) do
                 if obj.Parent then
-                    local primary = obj.PrimaryPart
-                    if not primary then
-                        for _, child in ipairs(obj:GetDescendants()) do
-                            if child:IsA("BasePart") then
-                                primary = child
-                                break
-                            end
-                        end
-                    end
-                    if primary then
-                        local dist = (primary.Position - origin).Magnitude
+                    local targetBag = obj:FindFirstChild("Bag")
+                    if targetBag then
+                        local dist = (targetBag.Position - origin).Magnitude
                         if dist <= range then
                             table.insert(validTargets, {
-                                Object = obj, Root = primary, Health = 100, IsModel = true, Priority = 1
+                                Object = obj, Root = targetBag, Health = 100, IsModel = true, Priority = 1
                             })
                         end
                     end
-                else
-                    cachedTargets[obj] = nil
                 end
             end
         end
+
         if #validTargets > 0 then
             table.sort(validTargets, function(a, b)
                 if a.Priority ~= b.Priority then
@@ -705,18 +650,62 @@ local auraTask = task.spawn(function()
                 end
                 return false
             end)
-            
+
             currentMeleeTargetRoot = validTargets[1].Root
             local currentDamage = Toggles.CustomDamageToggle.Value and Options.CustomDamageAmount.Value or 50
             for _, target in ipairs(validTargets) do
                 if target.IsModel then
                     WeaponsTargetsClient.hitTarget(target.Object, currentDamage)
                 else
-                    WeaponsDamageClient.dealMelee(target.Player, target.Humanoid, currentDamage)
+                    local fakeHumanoid = setmetatable({}, {
+                        __index = function(_, key)
+                            if key == "RootPart" then
+                                return root
+                            end
+                            return target.Humanoid[key]
+                        end,
+                        __newindex = function(_, key, value)
+                            target.Humanoid[key] = value
+                        end
+                    })
+                    WeaponsDamageClient.dealMelee(target.Player, fakeHumanoid, currentDamage)
                 end
             end
         else
             currentMeleeTargetRoot = nil
+        end
+    end
+end)
+
+task.spawn(function()
+    task.wait(3)
+    local effectModule = nil
+    for _, obj in pairs(getgc(true)) do
+        if type(obj) == "table" and rawget(obj, "runMuzzleEffects") and rawget(obj, "runFlintlockEffects") then
+            effectModule = obj
+            break
+        end
+    end
+    if not effectModule then return end
+
+    local targetEmitter = nil
+    for _, upvalue in pairs(debug.getupvalues(effectModule.runFlintlockEffects)) do
+        if type(upvalue) == "table" then
+            local success, emitFunc = pcall(function() return upvalue.Emit end)
+            if success and type(emitFunc) == "function" then
+                targetEmitter = upvalue
+                break
+            end
+        end
+    end
+
+    if targetEmitter then
+        local originalEmit = targetEmitter.Emit
+        targetEmitter.Emit = function(self, particleName, ...)
+            if Toggles.NoSmoke and Toggles.NoSmoke.Value and type(particleName) == "string" and string.find(particleName, "Smoke") then
+                return
+            end
+            return originalEmit(self, particleName, ...)
         end
     end
 end)
