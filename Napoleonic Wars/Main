@@ -167,20 +167,27 @@ local Tabs = {
 }
 
 local SilentAimGroup = Tabs.Combat:AddLeftGroupbox('Silent Aim')
-local MeleeGroup = Tabs.Combat:AddLeftGroupbox('Melee Aura')
-local FOVGroup = Tabs.Combat:AddRightGroupbox('FOV')
-local TracerGroup = Tabs.Combat:AddRightGroupbox('Tracer')
+local MeleeGroup = Tabs.Combat:AddRightGroupbox('Melee Aura')
 local MiscTabbox = Tabs.Misc:AddLeftTabbox()
 local WeaponTab = MiscTabbox:AddTab('Weapon')
 local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
 
-SilentAimGroup:AddToggle('SilentAimEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('SilentAimKeybind', { Default = '-', SyncToggleState = true, Mode = 'Toggle', Text = 'Silent Aim' })
+SilentAimGroup:AddToggle('SilentAimEnabled', { Text = 'Enable Silent Aim', Default = false }):AddKeyPicker('SilentAimKeybind', { Default = '-', SyncToggleState = true, Mode = 'Toggle', Text = 'Silent Aim' })
 SilentAimGroup:AddDropdown('SilentAimHitpart', { Values = { 'HumanoidRootPart', 'Head' }, Default = 1, Multi = false, Text = 'Hitpart' })
 SilentAimGroup:AddToggle('StickyAim', { Text = 'Sticky Aim', Default = false })
 SilentAimGroup:AddToggle('VisibleCheck', { Text = 'Visible Check', Default = false })
 SilentAimGroup:AddToggle('PrioritizeFlagBearers', { Text = 'Prioritize Flag Bearers', Default = false })
 SilentAimGroup:AddSlider('SilentAimMaxDist', { Text = 'Max Distance', Default = 4700, Min = 1, Max = 4700, Rounding = 0, Suffix = ' st' })
 SilentAimGroup:AddSlider('HitChance', { Text = 'Hit Chance', Default = 100, Min = 0, Max = 100, Rounding = 0, Suffix = '%' })
+SilentAimGroup:AddToggle('FOVEnabled', { Text = 'Enable FOV', Default = false })
+SilentAimGroup:AddToggle('FOVOutline', { Text = 'FOV Outline', Default = false }):AddColorPicker('FOVOutlineColor', { Default = Library.AccentColor })
+SilentAimGroup:AddToggle('FOVFilled', { Text = 'FOV Filled', Default = false }):AddColorPicker('FOVFilledColor', { Default = Library.AccentColor })
+SilentAimGroup:AddSlider('FOVRadius', { Text = 'FOV Radius', Default = 100, Min = 0, Max = 600, Rounding = 0 })
+SilentAimGroup:AddSlider('FOVThickness', { Text = 'FOV Thickness', Default = 1, Min = 1, Max = 10, Rounding = 0 })
+SilentAimGroup:AddSlider('FOVNumSides', { Text = 'FOV Num Sides', Default = 32, Min = 10, Max = 60, Rounding = 0 })
+SilentAimGroup:AddSlider('FOVFilledTransparency', { Text = 'FOV Filled Transparency', Default = 0.5, Min = 0, Max = 1, Rounding = 2 })
+SilentAimGroup:AddToggle('TracerEnabled', { Text = 'Enable Tracer', Default = false }):AddColorPicker('TracerColor', { Default = Library.AccentColor })
+SilentAimGroup:AddSlider('TracerThickness', { Text = 'Tracer Thickness', Default = 1, Min = 1, Max = 10, Rounding = 0 })
 
 MeleeGroup:AddToggle('MeleeAuraEnable', { Text = 'Enable', Default = false }):AddKeyPicker('MeleeAuraKeybind', { Default = '-', SyncToggleState = true, Mode = 'Toggle', Text = 'Melee Aura' })
 MeleeGroup:AddSlider('MeleeAuraRange', { Text = 'Range', Default = 12, Min = 5, Max = 30, Rounding = 1, Suffix = ' st' })
@@ -195,27 +202,16 @@ MeleeGroup:AddToggle('MeleeAuraPriorityHigh', { Text = 'Prioritize High Health',
         Toggles.MeleeAuraPriorityLow:SetValue(false)
     end
 end)
-MeleeGroup:AddToggle('CustomDamageToggle', { Text = 'Custom Damage', Default = false })
-MeleeGroup:AddSlider('CustomDamageAmount', { Text = 'Damage Amount', Default = 50, Min = 1, Max = 50, Rounding = 0, Suffix = ' HP' })
+MeleeGroup:AddToggle('CustomDamageToggle', { Text = 'Custom Damage Max 50', Default = false })
 MeleeGroup:AddToggle('MeleeAuraCircle', { Text = 'Show Range Circle', Default = false }):AddColorPicker('RangeCircleColor', { Default = Color3.new(1, 1, 1), Title = 'Range Circle Color' })
 MeleeGroup:AddToggle('MeleeAuraTracer', { Text = 'Show Target Tracer', Default = false }):AddColorPicker('MeleeTracerColor', { Default = Color3.new(1, 0, 0), Title = 'Target Tracer Color' })
-
-FOVGroup:AddToggle('FOVEnabled', { Text = 'Enable', Default = false })
-FOVGroup:AddToggle('FOVOutline', { Text = 'Outline', Default = false }):AddColorPicker('FOVOutlineColor', { Default = Library.AccentColor })
-FOVGroup:AddToggle('FOVFilled', { Text = 'Filled', Default = false }):AddColorPicker('FOVFilledColor', { Default = Library.AccentColor })
-FOVGroup:AddSlider('FOVRadius', { Text = 'Radius', Default = 100, Min = 0, Max = 600, Rounding = 0 })
-FOVGroup:AddSlider('FOVThickness', { Text = 'Thickness', Default = 1, Min = 1, Max = 10, Rounding = 0 })
-FOVGroup:AddSlider('FOVNumSides', { Text = 'Num Sides', Default = 32, Min = 10, Max = 60, Rounding = 0 })
-FOVGroup:AddSlider('FOVFilledTransparency', { Text = 'Filled Transparency', Default = 0.5, Min = 0, Max = 1, Rounding = 2 })
-
-TracerGroup:AddToggle('TracerEnabled', { Text = 'Enable', Default = false }):AddColorPicker('TracerColor', { Default = Library.AccentColor })
-TracerGroup:AddSlider('TracerThickness', { Text = 'Thickness', Default = 1, Min = 1, Max = 10, Rounding = 0 })
 
 WeaponTab:AddToggle('NoRecoil', { Text = 'No Recoil', Default = false })
 WeaponTab:AddToggle('NoSpread', { Text = 'No Spread', Default = false })
 WeaponTab:AddToggle('InstantAim', { Text = 'Instant Aim', Default = false })
 WeaponTab:AddToggle('NoSmoke', { Text = 'No Smoke', Default = false })
 WeaponTab:AddToggle('NoScreenEffects', { Text = 'No Screen Effects', Default = false })
+WeaponTab:AddToggle('OverrideMeleeDamage', { Text = 'Override Melee Damage', Default = false })
 
 MenuGroup:AddToggle('WatermarkToggle', { Text = 'Watermark', Default = false }):OnChanged(function()
     Library:SetWatermarkVisibility(Toggles.WatermarkToggle.Value)
@@ -241,7 +237,7 @@ Options.AccentColor:OnChanged(function()
     Options.TracerColor:SetValueRGB(Options.AccentColor.Value)
 end)
 
-for _, obj in ipairs(getgc(true)) do
+for _, obj in pairs(getgc(true)) do
     if type(obj) == "table" then
         if rawget(obj, "ClassName") == "FireActionClient" and rawget(obj, "UpdateReticle") then
             local originalUpdateReticle = obj.UpdateReticle
@@ -259,6 +255,14 @@ for _, obj in ipairs(getgc(true)) do
                     end
                 end
                 return originalUpdateReticle(self, progress, ...)
+            end
+        elseif rawget(obj, "ClassName") == "MeleeActionClient" and rawget(obj, "GetDamage") then
+            local originalGetDamage = obj.GetDamage
+            obj.GetDamage = function(self)
+                if Toggles.OverrideMeleeDamage and Toggles.OverrideMeleeDamage.Value then
+                    return 50
+                end
+                return originalGetDamage(self)
             end
         elseif rawget(obj, "shakeFiredShot") then
             local originalShake = obj.shakeFiredShot
@@ -305,6 +309,21 @@ for _, obj in ipairs(getgc(true)) do
                 if Toggles.NoScreenEffects.Value then return end
                 return origProjLanded(...)
             end
+        end
+    end
+end
+
+for _, fn in pairs(getgc(false)) do
+    if type(fn) == "function" then
+        local info = debug.getinfo(fn)
+        if info and info.name == "GetDamage" then
+            local originalGetDamageFn
+            originalGetDamageFn = hookfunction(fn, function(self)
+                if Toggles.OverrideMeleeDamage and Toggles.OverrideMeleeDamage.Value then
+                    return 50
+                end
+                return originalGetDamageFn(self)
+            end)
         end
     end
 end
@@ -408,13 +427,23 @@ end
 table.insert(Connections, RunService.RenderStepped:Connect(function()
     local currentCamera = Workspace.CurrentCamera
     if not currentCamera then return end
-    local mousePos = UserInputService:GetMouseLocation()
+    
     local silentAimEnabled = Toggles.SilentAimEnabled.Value
-    local tracerEnabled = Toggles.TracerEnabled.Value
-    local fovEnabled = Toggles.FOVEnabled.Value
-    local requireTargeting = silentAimEnabled or tracerEnabled
 
-    if requireTargeting then
+    if not silentAimEnabled then
+        silentAimTarget.part = nil
+        silentAimTarget.hitPos = nil
+        silentAimTarget.character = nil
+        silentAimTarget.pos2D = nil
+        
+        setDrawingProp(FOVCircle, "Visible", false)
+        setDrawingProp(FOVFilledCircle, "Visible", false)
+        setDrawingProp(TracerLine, "Visible", false)
+    else
+        local mousePos = UserInputService:GetMouseLocation()
+        local fovEnabled = Toggles.FOVEnabled.Value
+        local tracerEnabled = Toggles.TracerEnabled.Value
+
         local now = os.clock()
         if now - lastTargetUpdateTime >= TARGET_UPDATE_INTERVAL then
             lastTargetUpdateTime = now
@@ -451,49 +480,44 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
                 silentAimTarget.pos2D = pos2D
             end
         end
-    else
-        silentAimTarget.part = nil
-        silentAimTarget.hitPos = nil
-        silentAimTarget.character = nil
-        silentAimTarget.pos2D = nil
-    end
 
-    if fovEnabled then
-        local outlineEnabled = Toggles.FOVOutline.Value
-        local filledEnabled = Toggles.FOVFilled.Value
-        local fovRadius = Options.FOVRadius.Value
-        local fovNumSides = Options.FOVNumSides.Value
+        if fovEnabled then
+            local outlineEnabled = Toggles.FOVOutline.Value
+            local filledEnabled = Toggles.FOVFilled.Value
+            local fovRadius = Options.FOVRadius.Value
+            local fovNumSides = Options.FOVNumSides.Value
 
-        setDrawingProp(FOVCircle, "Visible", outlineEnabled)
-        setDrawingProp(FOVFilledCircle, "Visible", filledEnabled)
+            setDrawingProp(FOVCircle, "Visible", outlineEnabled)
+            setDrawingProp(FOVFilledCircle, "Visible", filledEnabled)
 
-        if outlineEnabled then
-            setDrawingProp(FOVCircle, "Position", mousePos)
-            setDrawingProp(FOVCircle, "Radius", fovRadius)
-            setDrawingProp(FOVCircle, "Thickness", Options.FOVThickness.Value)
-            setDrawingProp(FOVCircle, "NumSides", fovNumSides)
-            setDrawingProp(FOVCircle, "Color", Options.FOVOutlineColor.Value)
+            if outlineEnabled then
+                setDrawingProp(FOVCircle, "Position", mousePos)
+                setDrawingProp(FOVCircle, "Radius", fovRadius)
+                setDrawingProp(FOVCircle, "Thickness", Options.FOVThickness.Value)
+                setDrawingProp(FOVCircle, "NumSides", fovNumSides)
+                setDrawingProp(FOVCircle, "Color", Options.FOVOutlineColor.Value)
+            end
+            if filledEnabled then
+                setDrawingProp(FOVFilledCircle, "Position", mousePos)
+                setDrawingProp(FOVFilledCircle, "Radius", fovRadius)
+                setDrawingProp(FOVFilledCircle, "NumSides", fovNumSides)
+                setDrawingProp(FOVFilledCircle, "Color", Options.FOVFilledColor.Value)
+                setDrawingProp(FOVFilledCircle, "Transparency", Options.FOVFilledTransparency.Value)
+            end
+        else
+            setDrawingProp(FOVCircle, "Visible", false)
+            setDrawingProp(FOVFilledCircle, "Visible", false)
         end
-        if filledEnabled then
-            setDrawingProp(FOVFilledCircle, "Position", mousePos)
-            setDrawingProp(FOVFilledCircle, "Radius", fovRadius)
-            setDrawingProp(FOVFilledCircle, "NumSides", fovNumSides)
-            setDrawingProp(FOVFilledCircle, "Color", Options.FOVFilledColor.Value)
-            setDrawingProp(FOVFilledCircle, "Transparency", Options.FOVFilledTransparency.Value)
-        end
-    else
-        setDrawingProp(FOVCircle, "Visible", false)
-        setDrawingProp(FOVFilledCircle, "Visible", false)
-    end
 
-    if tracerEnabled and silentAimTarget.pos2D then
-        setDrawingProp(TracerLine, "Visible", true)
-        setDrawingProp(TracerLine, "From", mousePos)
-        setDrawingProp(TracerLine, "To", silentAimTarget.pos2D)
-        setDrawingProp(TracerLine, "Color", Options.TracerColor.Value)
-        setDrawingProp(TracerLine, "Thickness", Options.TracerThickness.Value)
-    else
-        setDrawingProp(TracerLine, "Visible", false)
+        if tracerEnabled and silentAimTarget.pos2D then
+            setDrawingProp(TracerLine, "Visible", true)
+            setDrawingProp(TracerLine, "From", mousePos)
+            setDrawingProp(TracerLine, "To", silentAimTarget.pos2D)
+            setDrawingProp(TracerLine, "Color", Options.TracerColor.Value)
+            setDrawingProp(TracerLine, "Thickness", Options.TracerThickness.Value)
+        else
+            setDrawingProp(TracerLine, "Visible", false)
+        end
     end
 
     local char = LocalPlayer.Character
@@ -652,7 +676,7 @@ local auraTask = task.spawn(function()
             end)
 
             currentMeleeTargetRoot = validTargets[1].Root
-            local currentDamage = Toggles.CustomDamageToggle.Value and Options.CustomDamageAmount.Value or 50
+            local currentDamage = Toggles.CustomDamageToggle.Value and 50 or 50
             for _, target in ipairs(validTargets) do
                 if target.IsModel then
                     WeaponsTargetsClient.hitTarget(target.Object, currentDamage)
