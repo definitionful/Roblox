@@ -1,1063 +1,1246 @@
-if getgenv()._UnloadPreviousInstance then
-    pcall(getgenv()._UnloadPreviousInstance)
-end
-
-local getinfo = getinfo or debug.getinfo
-local Hooked = {}
-local Detected, Kill
-
-setthreadidentity(2)
-
-for i, v in getgc(true) do
-    if type(v) == "table" then
-        local DetectFunc = rawget(v, "Detected")
-        local KillFunc = rawget(v, "Kill")
-    
-        if type(DetectFunc) == "function" and not Detected then
-            Detected = DetectFunc
-            
-            local Old; Old = hookfunction(Detected, function(Action, Info, NoCrash)
-                return true
-            end)
-
-            table.insert(Hooked, Detected)
-        end
-
-        if rawget(v, "Variables") and rawget(v, "Process") and type(KillFunc) == "function" and not Kill then
-            Kill = KillFunc
-            local Old; Old = hookfunction(Kill, function(Info)
-            end)
-
-            table.insert(Hooked, Kill)
-        end
+pcall(function()
+    if getgenv()._UnloadPreviousInstance then
+        pcall(getgenv()._UnloadPreviousInstance)
     end
-end
 
-local OldDebugInfo; OldDebugInfo = hookfunction(getrenv().debug.info, newcclosure(function(...)
-    local LevelOrFunc, Info = ...
+    local Detected, Kill
+    setthreadidentity(2)
 
-    if Detected and LevelOrFunc == Detected then
-        return coroutine.yield(coroutine.running())
-    end
-    
-    return OldDebugInfo(...)
-end))
+    for i, v in getgc(true) do
+        if type(v) == "table" then
+            local DetectFunc = rawget(v, "Detected")
+            local KillFunc = rawget(v, "Kill")
+        
+            if type(DetectFunc) == "function" and not Detected then
+                Detected = DetectFunc
+                hookfunction(Detected, function() return true end)
+            end
 
-setthreadidentity(7)
-
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/definitionful/Roblox/refs/heads/main/Library"))()
-local ThemeManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/definitionful/Roblox/refs/heads/main/Universal/ThemeManager"))()
-local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/refs/heads/main/addons/SaveManager.lua"))()
-
-getgenv()._UnloadPreviousInstance = function()
-    if Library and not Library.Unloaded then
-        Library:Unload()
-    end
-end
-
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local Teams = game:GetService("Teams")
-local Workspace = game:GetService("Workspace")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Lighting = game:GetService("Lighting")
-
-local LocalPlayer = Players.LocalPlayer
-local PlayerMouse = LocalPlayer:GetMouse()
-
-local BOX_TOP_OFFSET = Vector3.new(0, 3.3, 0)
-local BOX_BOTTOM_OFFSET = Vector3.new(0, 4.2, 0)
-local HIT_NORMAL = Vector3.new(0, 1, 0)
-
-local drawingPropCache = {}
-
-local function setDrawingProp(drawing, prop, value)
-    if not drawingPropCache[drawing] then
-        drawingPropCache[drawing] = {}
-    end
-    if drawingPropCache[drawing][prop] ~= value then
-        drawingPropCache[drawing][prop] = value
-        drawing[prop] = value
-    end
-end
-
-local FOVCircle = Drawing.new("Circle")
-setDrawingProp(FOVCircle, "Visible", false)
-setDrawingProp(FOVCircle, "Thickness", 1)
-setDrawingProp(FOVCircle, "NumSides", 32)
-setDrawingProp(FOVCircle, "Filled", false)
-setDrawingProp(FOVCircle, "Transparency", 1)
-setDrawingProp(FOVCircle, "ZIndex", 2)
-
-local FOVFilledCircle = Drawing.new("Circle")
-setDrawingProp(FOVFilledCircle, "Visible", false)
-setDrawingProp(FOVFilledCircle, "Thickness", 1)
-setDrawingProp(FOVFilledCircle, "NumSides", 32)
-setDrawingProp(FOVFilledCircle, "Filled", true)
-setDrawingProp(FOVFilledCircle, "Transparency", 1)
-setDrawingProp(FOVFilledCircle, "ZIndex", 1)
-
-local TracerLine = Drawing.new("Line")
-setDrawingProp(TracerLine, "Visible", false)
-setDrawingProp(TracerLine, "Thickness", 1)
-setDrawingProp(TracerLine, "ZIndex", 3)
-
-local R15_BONES = {
-    {"Head", "UpperTorso"},
-    {"UpperTorso", "LowerTorso"},
-    {"UpperTorso", "LeftUpperArm"}, {"LeftUpperArm", "LeftLowerArm"}, 
-    {"LeftLowerArm", "LeftHand"},
-    {"UpperTorso", "RightUpperArm"}, {"RightUpperArm", "RightLowerArm"}, {"RightLowerArm", "RightHand"},
-    {"LowerTorso", "LeftUpperLeg"}, {"LeftUpperLeg", "LeftLowerLeg"}, {"LeftLowerLeg", "LeftFoot"},
-    {"LowerTorso", "RightUpperLeg"}, {"RightUpperLeg", "RightLowerLeg"}, {"RightLowerLeg", "RightFoot"}
-}
-
-local R6_BONES = {
-    {"Head", "Torso"},
-    {"Torso", "Left Arm"}, {"Torso", "Right Arm"},
-    {"Torso", "Left Leg"}, {"Torso", "Right Leg"}
-}
-
-local MULTIPOINT_OFFSETS = {
-    Vector3.new(0, 0, 0),
-    Vector3.new(1, 1, 1), Vector3.new(-1, 1, 1), Vector3.new(1, -1, 1), Vector3.new(-1, -1, 1),
-    Vector3.new(1, 1, -1), Vector3.new(-1, 1, -1), Vector3.new(1, -1, -1), Vector3.new(-1, -1, -1),
-    Vector3.new(1, 0, 0), 
-    Vector3.new(-1, 0, 0), Vector3.new(0, 1, 0), Vector3.new(0, -1, 0)
-}
-
-local ESPCache = {}
-local TargetCache = setmetatable({}, {__mode = "k"})
-local Connections = {}
-
-local OriginalLighting = {
-    Brightness = Lighting.Brightness,
-    ClockTime = Lighting.ClockTime,
-    FogEnd = Lighting.FogEnd,
-    GlobalShadows = Lighting.GlobalShadows,
-    OutdoorAmbient = Lighting.OutdoorAmbient
-}
-
-local sharedRayParams = RaycastParams.new()
-sharedRayParams.FilterType = Enum.RaycastFilterType.Exclude
-
-local sharedVisibilityParams = RaycastParams.new()
-sharedVisibilityParams.FilterType = Enum.RaycastFilterType.Exclude
-
-local filterList = {}
-local dynamicFilterList = {}
-local entitiesList = {}
-local potentialTargetsList = {}
-
-local debrisFolder = Workspace:FindFirstChild("Debris")
-local rayExceptionFolder = debrisFolder and debrisFolder:FindFirstChild("RayException")
-
-local function CalculateChance(Percentage)
-    return math.random(1, 100) <= Percentage
-end
-
-local Window = Library:CreateWindow({
-    Title = 'Universal',
-    Center = true,
-    AutoShow = true,
-    TabPadding = 8,
-    MenuFadeTime = 0.2
-})
-
-local Toggles = getgenv().Toggles
-local Options = getgenv().Options
-
-local Tabs = {
-    Combat = Window:AddTab('Combat'),
-    Visuals = Window:AddTab('Visuals'),
-    Settings = Window:AddTab('Settings')
-}
-
-local SilentAimGroup = Tabs.Combat:AddLeftGroupbox('Player Silent Aim')
-local FOVGroup = Tabs.Combat:AddRightGroupbox('FOV')
-local TracerGroup = Tabs.Combat:AddRightGroupbox('Tracer')
-
-local PlayerESPGroup = Tabs.Visuals:AddLeftGroupbox('Player ESP')
-local WorldGroup = Tabs.Visuals:AddLeftGroupbox('World')
-
-local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
-
-SilentAimGroup:AddToggle('SilentAimEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('SilentAimKeybind', { Default = 'NONE', SyncToggleState = true, Mode = 'Toggle', Text = 'Silent Aim' })
-SilentAimGroup:AddDropdown('SilentAimMethod', { Values = { 'Raycast', 'Mouse.Hit' }, Default = 1, Multi = false, Text = 'Silent Aim Method' })
-SilentAimGroup:AddToggle('PredictionEnabled', { Text = 'Enable Prediction', Default = false })
-SilentAimGroup:AddSlider('PredictionAmount', { Text = 'Prediction Amount', Default = 0.165, Min = 0, Max = 1, Rounding = 3, Compact = false })
-SilentAimGroup:AddSlider('Hitchance', { Text = 'Hitchance', Default = 100, Min = 0, Max = 100, Rounding = 0, Compact = false })
-SilentAimGroup:AddDropdown('Hitpart', { Values = { 'Head', 'HumanoidRootPart', 'Random' }, Default = 1, Multi = false, Text = 'Hitpart' })
-SilentAimGroup:AddToggle('VisibleCheck', { Text = 'Visible Check', Default = false })
-SilentAimGroup:AddToggle('InvisibleCheck', { Text = 'Invisible Check', Default = false })
-
-local TeamNames = {}
-for _, team in ipairs(Teams:GetTeams()) do
-    table.insert(TeamNames, team.Name)
-end
-table.sort(TeamNames)
-
-SilentAimGroup:AddDropdown('IgnoredTeams', { Values = TeamNames, Default = 0, Multi = true, Text = 'Ignored Teams' })
-
-local function UpdateTeamDropdown()
-    local newTeams = {}
-    for _, team in ipairs(Teams:GetTeams()) do
-        table.insert(newTeams, team.Name)
-    end
-    table.sort(newTeams)
-    Options.IgnoredTeams:SetValues(newTeams)
-end
-
-table.insert(Connections, Teams.ChildAdded:Connect(UpdateTeamDropdown))
-table.insert(Connections, Teams.ChildRemoved:Connect(UpdateTeamDropdown))
-
-FOVGroup:AddToggle('FOVEnabled', { Text = 'Enable', Default = false })
-local FOVOutlineToggle = FOVGroup:AddToggle('FOVOutline', { Text = 'Outline', Default = false })
-FOVOutlineToggle:AddColorPicker('FOVOutlineColor', { Default = Library.AccentColor })
-
-local FOVFilledToggle = FOVGroup:AddToggle('FOVFilled', { Text = 'Filled', Default = false })
-FOVFilledToggle:AddColorPicker('FOVFilledColor', { Default = Library.AccentColor })
-
-FOVGroup:AddSlider('FOVRadius', { Text = 'Radius', Default = 100, Min = 0, Max = 600, Rounding = 0 })
-FOVGroup:AddSlider('FOVThickness', { Text = 'Thickness', Default = 1, Min = 1, Max = 10, Rounding = 0 })
-FOVGroup:AddSlider('FOVNumSides', { Text = 'Num Sides', Default = 32, Min = 10, Max = 60, Rounding = 0 })
-FOVGroup:AddSlider('FOVFilledTransparency', { Text = 'Filled Transparency', Default = 0.5, Min = 0, Max = 1, Rounding = 2 })
-
-TracerGroup:AddToggle('TracerEnabled', { Text = 'Enable', Default = false }):AddColorPicker('TracerColor', { Default = Library.AccentColor })
-TracerGroup:AddSlider('TracerThickness', { Text = 'Thickness', Default = 1, Min = 1, Max = 10, Rounding = 0 })
-
-PlayerESPGroup:AddToggle('ESPEnabled', { Text = 'Enable', Default = false })
-PlayerESPGroup:AddToggle('ESPTeamColor', { Text = 'Use Team Color', Default = false })
-PlayerESPGroup:AddToggle('ESPBox', { Text = 'Box', Default = false }):AddColorPicker('BoxColor', { Default = Color3.fromRGB(255, 255, 255) })
-PlayerESPGroup:AddDropdown('ESPBoxType', { Values = { 'Corner', 'Default' }, Default = 2, Multi = false, Text = 'Box Type' })
-PlayerESPGroup:AddToggle('ESPSkeleton', { Text = 'Skeleton', Default = false }):AddColorPicker('SkeletonColor', { Default = Color3.fromRGB(0, 255, 120) })
-PlayerESPGroup:AddToggle('ESPName', { Text = 'Name', Default = false }):AddColorPicker('NameColor', { Default = Color3.fromRGB(255, 255, 255) })
-PlayerESPGroup:AddToggle('ESPDistance', { Text = 'Distance', Default = false })
-PlayerESPGroup:AddToggle('ESPHealth', { Text = 'Health Bar', Default = false })
-PlayerESPGroup:AddToggle('ESPHealthText', { Text = 'Health Text', Default = false })
-PlayerESPGroup:AddToggle('ESPTool', { Text = 'Equipped Tool', Default = false })
-
-WorldGroup:AddToggle('Fullbright', { Text = 'Fullbright', Default = false })
-WorldGroup:AddToggle('RemoveParticles', { Text = 'Remove Particles', Default = false }):OnChanged(function()
-    if Toggles.RemoveParticles.Value then
-        for _, v in ipairs(Workspace:GetDescendants()) do
-            if v:IsA("ParticleEmitter") then
-                v:Destroy()
+            if rawget(v, "Variables") and rawget(v, "Process") and type(KillFunc) == "function" and not Kill then
+                Kill = KillFunc
+                hookfunction(Kill, function() end)
             end
         end
     end
-end)
 
-table.insert(Connections, Workspace.DescendantAdded:Connect(function(v)
-    if Toggles.RemoveParticles and Toggles.RemoveParticles.Value and v:IsA("ParticleEmitter") then
-        task.defer(function()
-            if v.Parent then
-                v:Destroy()
+    local OldDebugInfo; OldDebugInfo = hookfunction(getrenv().debug.info, newcclosure(function(...)
+        local LevelOrFunc = ...
+        if Detected and LevelOrFunc == Detected then return nil end
+        return OldDebugInfo(...)
+    end))
+
+    setthreadidentity(7)
+
+    local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/definitionful/Roblox/refs/heads/main/Library"))()
+    local ThemeManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/definitionful/Roblox/refs/heads/main/Universal/ThemeManager"))()
+    local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/refs/heads/main/addons/SaveManager.lua"))()
+
+    getgenv()._UnloadPreviousInstance = function()
+        if Library and not Library.Unloaded then
+            pcall(function() Library:Unload() end)
+        end
+    end
+
+    local Players = game:GetService("Players")
+    local UserInputService = game:GetService("UserInputService")
+    local RunService = game:GetService("RunService")
+    local Teams = game:GetService("Teams")
+    local Workspace = game:GetService("Workspace")
+    local Lighting = game:GetService("Lighting")
+
+    local LocalPlayer = Players.LocalPlayer
+    local PlayerMouse = LocalPlayer:GetMouse()
+
+    local v2new, v3new = Vector2.new, Vector3.new
+    local mcos, msin, mpi, mabs, mclamp, mfloor, matan2 = math.cos, math.sin, math.pi, math.abs, math.clamp, math.floor, math.atan2
+
+    local BOX_TOP_OFFSET = v3new(0, 3.3, 0)
+    local BOX_BOTTOM_OFFSET = v3new(0, 4.2, 0)
+
+    local drawingPropCache = {}
+
+    local function setDrawingProp(drawing, prop, value)
+        pcall(function()
+            if not drawingPropCache[drawing] then drawingPropCache[drawing] = {} end
+            if drawingPropCache[drawing][prop] ~= value then
+                drawingPropCache[drawing][prop] = value
+                drawing[prop] = value
             end
         end)
     end
-end))
 
-MenuGroup:AddToggle('WatermarkToggle', { Text = 'Watermark', Default = false }):OnChanged(function()
-    Library:SetWatermarkVisibility(Toggles.WatermarkToggle.Value)
-end)
+    local FOVCircle = Drawing.new("Circle")
+    setDrawingProp(FOVCircle, "Visible", false)
+    setDrawingProp(FOVCircle, "Thickness", 1)
+    setDrawingProp(FOVCircle, "NumSides", 32)
+    setDrawingProp(FOVCircle, "Filled", false)
+    setDrawingProp(FOVCircle, "Transparency", 1)
+    setDrawingProp(FOVCircle, "ZIndex", 2)
 
-Library:SetWatermark('Universal Client')
-Library:SetWatermarkVisibility(false)
+    local FOVFilledCircle = Drawing.new("Circle")
+    setDrawingProp(FOVFilledCircle, "Visible", false)
+    setDrawingProp(FOVFilledCircle, "Thickness", 1)
+    setDrawingProp(FOVFilledCircle, "NumSides", 32)
+    setDrawingProp(FOVFilledCircle, "Filled", true)
+    setDrawingProp(FOVFilledCircle, "Transparency", 1)
+    setDrawingProp(FOVFilledCircle, "ZIndex", 1)
 
-ThemeManager:SetLibrary(Library)
-SaveManager:SetLibrary(Library)
-ThemeManager:SetFolder('Universal')
-SaveManager:SetFolder('Universal')
+    local TracerLine = Drawing.new("Line")
+    setDrawingProp(TracerLine, "Visible", false)
+    setDrawingProp(TracerLine, "Thickness", 1)
+    setDrawingProp(TracerLine, "ZIndex", 3)
 
-SaveManager:IgnoreThemeSettings()
-ThemeManager:ApplyToTab(Tabs.Settings)
-SaveManager:BuildConfigSection(Tabs.Settings)
-
-Options.AccentColor:OnChanged(function()
-    Options.FOVOutlineColor:SetValueRGB(Options.AccentColor.Value)
-    Options.FOVFilledColor:SetValueRGB(Options.AccentColor.Value)
-    Options.TracerColor:SetValueRGB(Options.AccentColor.Value)
-end)
-
-local function hideVisuals(data)
-    for i = 1, 14 do setDrawingProp(data.Skeleton[i], "Visible", false) end
-    for i = 1, 8 do setDrawingProp(data.CornerBox[i], "Visible", false) end
-    setDrawingProp(data.Box, "Visible", false)
-    setDrawingProp(data.HealthBarBg, "Visible", false)
-    setDrawingProp(data.HealthBar, "Visible", false)
-    setDrawingProp(data.NameTag, "Visible", false)
-    setDrawingProp(data.DistanceTag, "Visible", false)
-    setDrawingProp(data.HealthTextTag, "Visible", false)
-    setDrawingProp(data.ToolTag, "Visible", false)
-end
-
-local function validateCache(entity, data)
-    local character = entity.Character
-    if not character or not character.Parent then
-        data.CachedParts = nil
-        return nil
-    end
-
-    if data.CachedParts and data.CachedParts.Character == character and data.CachedParts.HRP and data.CachedParts.HRP.Parent and data.CachedParts.Humanoid and data.CachedParts.Humanoid.Parent then
-        return data.CachedParts
-    end
-
-    local hrp = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart or character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    
-    if not hrp or not humanoid then
-        data.CachedParts = nil
-        return nil
-    end
-
-    local isR15 = character:FindFirstChild("UpperTorso") ~= nil
-    local currentBones = isR15 and R15_BONES or R6_BONES
-    local boneParts = {}
-
-    for i, bonePair in ipairs(currentBones) do
-        boneParts[i] = {
-            character:FindFirstChild(bonePair[1]),
-            character:FindFirstChild(bonePair[2])
-        }
-    end
-
-    data.CachedParts = {
-        HRP = hrp,
-        Humanoid = humanoid,
-        BoneParts = boneParts,
-        Character = character
-    }
-    
-    return data.CachedParts
-end
-
-local function createESPData(cacheTable, key)
-    if cacheTable[key] then return end
-    
-    local data = {
-        Skeleton = {},
-        CornerBox = {},
-        Box = Drawing.new("Square"),
-        HealthBarBg = Drawing.new("Square"),
-        HealthBar = Drawing.new("Square"),
-        NameTag = Drawing.new("Text"),
-        DistanceTag = Drawing.new("Text"),
-        HealthTextTag = Drawing.new("Text"),
-        ToolTag = Drawing.new("Text"),
-        CachedParts = nil,
-        Connections = {}
+    local R15_BONES = {
+        {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"},
+        {"UpperTorso", "LeftUpperArm"}, {"LeftUpperArm", "LeftLowerArm"}, {"LeftLowerArm", "LeftHand"},
+        {"UpperTorso", "RightUpperArm"}, {"RightUpperArm", "RightLowerArm"}, {"RightLowerArm", "RightHand"},
+        {"LowerTorso", "LeftUpperLeg"}, {"LeftUpperLeg", "LeftLowerLeg"}, {"LeftLowerLeg", "LeftFoot"},
+        {"LowerTorso", "RightUpperLeg"}, {"RightUpperLeg", "RightLowerLeg"}, {"RightLowerLeg", "RightFoot"}
     }
 
-    setDrawingProp(data.Box, "Thickness", 1.5)
-    setDrawingProp(data.Box, "Filled", false)
-    setDrawingProp(data.Box, "Visible", false)
+    local R6_BONES = {
+        {"Head", "Torso"}, {"Torso", "Left Arm"}, {"Torso", "Right Arm"},
+        {"Torso", "Left Leg"}, {"Torso", "Right Leg"}
+    }
 
-    setDrawingProp(data.HealthBarBg, "Color", Color3.fromRGB(40, 40, 40))
-    setDrawingProp(data.HealthBarBg, "Filled", true)
-    setDrawingProp(data.HealthBarBg, "Thickness", 0)
-    setDrawingProp(data.HealthBarBg, "Visible", false)
+    local MULTIPOINT_OFFSETS = {
+        v3new(0, 0, 0), v3new(1, 1, 1), v3new(-1, 1, 1), v3new(1, -1, 1), v3new(-1, -1, 1),
+        v3new(1, 1, -1), v3new(-1, 1, -1), v3new(1, -1, -1), v3new(-1, -1, -1),
+        v3new(1, 0, 0), v3new(-1, 0, 0), v3new(0, 1, 0), v3new(0, -1, 0)
+    }
 
-    setDrawingProp(data.HealthBar, "Filled", true)
-    setDrawingProp(data.HealthBar, "Thickness", 0)
-    setDrawingProp(data.HealthBar, "Visible", false)
+    local ESPCache = {}
+    local TargetCache = setmetatable({}, {__mode = "k"})
+    local Connections = {}
+    local NPCCache = setmetatable({}, {__mode = "k"})
 
-    setDrawingProp(data.NameTag, "Size", 13)
-    setDrawingProp(data.NameTag, "Center", true)
-    setDrawingProp(data.NameTag, "Outline", true)
-    setDrawingProp(data.NameTag, "Visible", false)
+    local OriginalLighting = {
+        Brightness = Lighting.Brightness,
+        ClockTime = Lighting.ClockTime,
+        FogEnd = Lighting.FogEnd,
+        GlobalShadows = Lighting.GlobalShadows,
+        OutdoorAmbient = Lighting.OutdoorAmbient
+    }
 
-    setDrawingProp(data.DistanceTag, "Size", 13)
-    setDrawingProp(data.DistanceTag, "Center", true)
-    setDrawingProp(data.DistanceTag, "Outline", true)
-    setDrawingProp(data.DistanceTag, "Visible", false)
+    local sharedRayParams = RaycastParams.new()
+    sharedRayParams.FilterType = Enum.RaycastFilterType.Exclude
 
-    setDrawingProp(data.HealthTextTag, "Size", 13)
-    setDrawingProp(data.HealthTextTag, "Center", true)
-    setDrawingProp(data.HealthTextTag, "Outline", true)
-    setDrawingProp(data.HealthTextTag, "Visible", false)
+    local filterList = {}
+    local entitiesList = {}
+    local potentialTargetsList = {}
 
-    setDrawingProp(data.ToolTag, "Size", 13)
-    setDrawingProp(data.ToolTag, "Center", true)
-    setDrawingProp(data.ToolTag, "Outline", true)
-    setDrawingProp(data.ToolTag, "Visible", false)
+    local debrisFolder = Workspace:FindFirstChild("Debris")
+    local rayExceptionFolder = debrisFolder and debrisFolder:FindFirstChild("RayException")
 
-    for i = 1, 14 do
-        local line = Drawing.new("Line")
-        setDrawingProp(line, "Thickness", 1.5)
-        setDrawingProp(line, "Visible", false)
-        table.insert(data.Skeleton, line)
+    local function CalculateChance(Percentage)
+        return math.random(1, 100) <= Percentage
     end
 
-    for i = 1, 8 do
-        local line = Drawing.new("Line")
-        setDrawingProp(line, "Thickness", 1.5)
-        setDrawingProp(line, "Visible", false)
-        table.insert(data.CornerBox, line)
-    end
+    local function createESPData(cacheTable, key)
+        pcall(function()
+            if cacheTable[key] then return end
+            local data = {
+                Skeleton = {}, CornerBox = {}, HealthSegments = {},
+                Box = Drawing.new("Square"), BoxFill = Drawing.new("Square"),
+                HealthBarBg = Drawing.new("Square"), HealthBar = Drawing.new("Square"),
+                NameTag = Drawing.new("Text"), TeamTag = Drawing.new("Text"),
+                DistanceTag = Drawing.new("Text"), HealthTextTag = Drawing.new("Text"),
+                ToolTag = Drawing.new("Text"), OffscreenArrow = Drawing.new("Triangle"),
+                Tracer = Drawing.new("Line"), CachedParts = nil, Connections = {}
+            }
 
-    cacheTable[key] = data
-end
+            setDrawingProp(data.Box, "Thickness", 1.5)
+            setDrawingProp(data.Box, "Filled", false)
+            setDrawingProp(data.Box, "Visible", false)
+            setDrawingProp(data.BoxFill, "Filled", true)
+            setDrawingProp(data.BoxFill, "Thickness", 0)
+            setDrawingProp(data.BoxFill, "Visible", false)
+            setDrawingProp(data.HealthBarBg, "Color", Color3.fromRGB(40, 40, 40))
+            setDrawingProp(data.HealthBarBg, "Filled", true)
+            setDrawingProp(data.HealthBarBg, "Thickness", 0)
+            setDrawingProp(data.HealthBarBg, "Visible", false)
+            setDrawingProp(data.HealthBar, "Filled", true)
+            setDrawingProp(data.HealthBar, "Thickness", 0)
+            setDrawingProp(data.HealthBar, "Visible", false)
 
-local function removeESPData(cacheTable, key)
-    if cacheTable[key] then
-        local data = cacheTable[key]
-        
-        for _, conn in ipairs(data.Connections) do
-            conn:Disconnect()
-        end
-        for i = 1, 14 do data.Skeleton[i]:Remove() end
-        for i = 1, 8 do data.CornerBox[i]:Remove() end
-        data.Box:Remove()
-        data.HealthBarBg:Remove()
-        data.HealthBar:Remove()
-        data.NameTag:Remove()
-        data.DistanceTag:Remove()
-        data.HealthTextTag:Remove()
-        data.ToolTag:Remove()
-        
-        drawingPropCache[data.Box] = nil
-        drawingPropCache[data.HealthBarBg] = nil
-        drawingPropCache[data.HealthBar] = nil
-        drawingPropCache[data.NameTag] = nil
-        drawingPropCache[data.DistanceTag] = nil
-        drawingPropCache[data.HealthTextTag] = nil
-        drawingPropCache[data.ToolTag] = nil
-        for i = 1, 14 do drawingPropCache[data.Skeleton[i]] = nil end
-        for i = 1, 8 do drawingPropCache[data.CornerBox[i]] = nil end
-        
-        cacheTable[key] = nil
-    end
-end
-
-for _, player in ipairs(Players:GetPlayers()) do
-    if player ~= LocalPlayer then createESPData(ESPCache, player) end
-end
-
-table.insert(Connections, Players.PlayerAdded:Connect(function(player)
-    if player ~= LocalPlayer then createESPData(ESPCache, player) end
-end))
-
-table.insert(Connections, Players.PlayerRemoving:Connect(function(player)
-    removeESPData(ESPCache, player)
-end))
-
-local function checkVisibility(startPos, endPos, character)
-    local direction = endPos - startPos
-    table.clear(dynamicFilterList)
-    
-    for i = 1, #filterList do
-        dynamicFilterList[i] = filterList[i]
-    end
-
-    for i = 1, 5 do
-        sharedVisibilityParams.FilterDescendantsInstances = dynamicFilterList
-        local result = Workspace:Raycast(startPos, direction, sharedVisibilityParams)
-        
-        if not result or result.Instance:IsDescendantOf(character) then
-            return true
-        end
-        
-        if result.Instance.Transparency > 0.5 or not result.Instance.CanCollide then
-            table.insert(dynamicFilterList, result.Instance)
-        else
-            return false
-        end
-    end
-    return false
-end
-
-local function getClosestCharacterToMouse(mousePos, currentCamera, skipMultipoint)
-    if not currentCamera then return nil, nil, nil end
-
-    local fovEnabled = Toggles.FOVEnabled.Value
-    local fovRadiusSq = Options.FOVRadius.Value * Options.FOVRadius.Value
-    local visibleCheck = Toggles.VisibleCheck.Value
-    
-    local targetPlayers = Toggles.SilentAimEnabled.Value
-
-    if not targetPlayers then
-        return nil, nil, nil
-    end
-
-    local localChar = LocalPlayer.Character
-    table.clear(filterList)
-    table.clear(entitiesList)
-    table.clear(potentialTargetsList)
-
-    table.insert(filterList, currentCamera)
-    if localChar then
-        table.insert(filterList, localChar)
-    end
-    if rayExceptionFolder then
-        table.insert(filterList, rayExceptionFolder)
-    elseif debrisFolder then
-        table.insert(filterList, debrisFolder)
-    end
-    sharedRayParams.FilterDescendantsInstances = filterList
-
-    local camCFramePos = currentCamera.CFrame.Position
-
-    for player, data in pairs(ESPCache) do
-        local cached = validateCache(player, data)
-        if cached and cached.Humanoid and cached.Humanoid.Health > 0 then
-            if player.Team then
-                local ignoredTeams = Options.IgnoredTeams.Value
-                if ignoredTeams and ignoredTeams[player.Team.Name] then
-                    continue
-                end
+            local textTags = {data.NameTag, data.TeamTag, data.DistanceTag, data.HealthTextTag, data.ToolTag}
+            for _, tag in ipairs(textTags) do
+                setDrawingProp(tag, "Size", 13)
+                setDrawingProp(tag, "Center", true)
+                setDrawingProp(tag, "Outline", true)
+                setDrawingProp(tag, "Visible", false)
             end
-        
-            if Toggles.InvisibleCheck.Value then
-                local head = cached.Character:FindFirstChild("Head")
-                if head and head.Transparency >= 0.5 then
-                    continue
-                end
-            end
-            table.insert(entitiesList, {
-                character = cached.Character,
-                head = cached.Character:FindFirstChild("Head"),
-                hrp = cached.HRP
-            })
-        end
-    end
-
-    local now = os.clock()
-    for i = 1, #entitiesList do
-        local entity = entitiesList[i]
-        local targetPartName = Options.Hitpart.Value
-        local targetPart
-        
-        if not TargetCache[entity.character] or not entity.character.Parent then
-            TargetCache[entity.character] = { part = nil, lastUpdate = 0 }
-        end
-        
-        local cache = TargetCache[entity.character]
-        if now - cache.lastUpdate >= 0.5 or not cache.part or not cache.part.Parent then
-            if targetPartName == 'Random' then
-                local parts = {}
-                for _, v in ipairs(entity.character:GetChildren()) do
-                    if v:IsA("BasePart") and v.Name ~= "HumanoidRootPart" then
-                        table.insert(parts, v)
-                    end
-                end
-                if #parts > 0 then
-                    cache.part = parts[math.random(1, #parts)]
-                else
-                    cache.part = entity.hrp
-                end
-            else
-                cache.part = targetPartName == 'Head' and entity.head or entity.hrp
-            end
-            cache.lastUpdate = now
-        end
-        
-        targetPart = cache.part
-        if not targetPart or not targetPart.Parent then continue end
-
-        local rootScreenPos, rootOnScreen = currentCamera:WorldToViewportPoint(targetPart.Position)
-        if fovEnabled and rootOnScreen then
-            local rx, ry = rootScreenPos.X - mousePos.X, rootScreenPos.Y - mousePos.Y
-            local rootDistSq = (rx * rx) + (ry * ry)
-            if rootDistSq > (fovRadiusSq * 3) then
-                continue
-            end
-        end
-
-        if not skipMultipoint then
-            local size = targetPart.Size * 0.8
-            local cf = targetPart.CFrame
-            local hx, hy, hz = size.X / 2, size.Y / 2, size.Z / 2
-             
-            for _, offset in ipairs(MULTIPOINT_OFFSETS) do
-                local point = cf * Vector3.new(hx * offset.X, hy * offset.Y, hz * offset.Z)
-                local screenPos, onScreen = currentCamera:WorldToViewportPoint(point)
-                
-                if onScreen then
-                    local px, py = screenPos.X - mousePos.X, screenPos.Y - mousePos.Y
-                    local distSq = (px * px) + (py * py)
-                    
-                    if not fovEnabled or distSq <= fovRadiusSq then
-                        table.insert(potentialTargetsList, {
-                            distanceSq = distSq,
-                            pos2D = Vector2.new(screenPos.X, screenPos.Y),
-                            part = targetPart,
-                            hitPos = point,
-                            character = entity.character
-                        })
-                    end
-                end
-            end
-        else
-            local point = targetPart.Position
-            local screenPos, onScreen = currentCamera:WorldToViewportPoint(point)
             
-            if onScreen then
-                local px, py = screenPos.X - mousePos.X, screenPos.Y - mousePos.Y
-                local distSq = (px * px) + (py * py)
-                
-                if not fovEnabled or distSq <= fovRadiusSq then
-                    table.insert(potentialTargetsList, {
-                        distanceSq = distSq,
-                        pos2D = Vector2.new(screenPos.X, screenPos.Y),
-                        part = targetPart,
-                        hitPos = point,
-                        character = entity.character
+            setDrawingProp(data.OffscreenArrow, "Thickness", 1.5)
+            setDrawingProp(data.OffscreenArrow, "Filled", true)
+            setDrawingProp(data.OffscreenArrow, "Visible", false)
+            setDrawingProp(data.Tracer, "Visible", false)
+
+            for i = 1, 14 do
+                local line = Drawing.new("Line")
+                setDrawingProp(line, "Thickness", 1.5)
+                setDrawingProp(line, "Visible", false)
+                table.insert(data.Skeleton, line)
+            end
+
+            for i = 1, 8 do
+                local line = Drawing.new("Line")
+                setDrawingProp(line, "Thickness", 1.5)
+                setDrawingProp(line, "Visible", false)
+                table.insert(data.CornerBox, line)
+            end
+            
+            for i = 1, 15 do
+                local seg = Drawing.new("Square")
+                setDrawingProp(seg, "Filled", true)
+                setDrawingProp(seg, "Thickness", 0)
+                setDrawingProp(seg, "Visible", false)
+                table.insert(data.HealthSegments, seg)
+            end
+
+            cacheTable[key] = data
+        end)
+    end
+
+    local function removeESPData(cacheTable, key)
+        pcall(function()
+            if cacheTable[key] then
+                local data = cacheTable[key]
+                for _, conn in ipairs(data.Connections) do pcall(function() conn:Disconnect() end) end
+                for i = 1, 14 do pcall(function() data.Skeleton[i]:Remove(); drawingPropCache[data.Skeleton[i]] = nil end) end
+                for i = 1, 8 do pcall(function() data.CornerBox[i]:Remove(); drawingPropCache[data.CornerBox[i]] = nil end) end
+                for i = 1, 15 do pcall(function() data.HealthSegments[i]:Remove(); drawingPropCache[data.HealthSegments[i]] = nil end) end
+                pcall(function() data.Box:Remove(); drawingPropCache[data.Box] = nil end)
+                pcall(function() data.BoxFill:Remove(); drawingPropCache[data.BoxFill] = nil end)
+                pcall(function() data.HealthBarBg:Remove(); drawingPropCache[data.HealthBarBg] = nil end)
+                pcall(function() data.HealthBar:Remove(); drawingPropCache[data.HealthBar] = nil end)
+                pcall(function() data.NameTag:Remove(); drawingPropCache[data.NameTag] = nil end)
+                pcall(function() data.TeamTag:Remove(); drawingPropCache[data.TeamTag] = nil end)
+                pcall(function() data.DistanceTag:Remove(); drawingPropCache[data.DistanceTag] = nil end)
+                pcall(function() data.HealthTextTag:Remove(); drawingPropCache[data.HealthTextTag] = nil end)
+                pcall(function() data.ToolTag:Remove(); drawingPropCache[data.ToolTag] = nil end)
+                pcall(function() data.OffscreenArrow:Remove(); drawingPropCache[data.OffscreenArrow] = nil end)
+                pcall(function() data.Tracer:Remove(); drawingPropCache[data.Tracer] = nil end)
+                cacheTable[key] = nil
+            end
+        end)
+    end
+
+    local function AddToNPCCache(model)
+        pcall(function()
+            if not model or not model:IsA("Model") or model == LocalPlayer.Character then return end
+            if model:FindFirstChildOfClass("Humanoid") then
+                NPCCache[model] = true
+                createESPData(ESPCache, model)
+            end
+        end)
+    end
+
+    for _, v in ipairs(Workspace:GetDescendants()) do
+        if v:IsA("Model") then AddToNPCCache(v) end
+    end
+
+    table.insert(Connections, Workspace.DescendantAdded:Connect(function(v)
+        pcall(function()
+            if v:IsA("Humanoid") and v.Parent and v.Parent:IsA("Model") then
+                AddToNPCCache(v.Parent)
+            elseif v:IsA("Model") then
+                task.delay(1, function()
+                    pcall(function()
+                        if v and v.Parent then AddToNPCCache(v) end
+                    end)
+                end)
+            end
+        end)
+    end))
+
+    table.insert(Connections, Workspace.DescendantRemoving:Connect(function(v)
+        pcall(function()
+            if v:IsA("Model") and NPCCache[v] then
+                NPCCache[v] = nil
+                removeESPData(ESPCache, v)
+            end
+        end)
+    end))
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then createESPData(ESPCache, player) end
+    end
+
+    table.insert(Connections, Players.PlayerAdded:Connect(function(player)
+        pcall(function()
+            if player ~= LocalPlayer then createESPData(ESPCache, player) end
+        end)
+    end))
+
+    table.insert(Connections, Players.PlayerRemoving:Connect(function(player)
+        pcall(function() removeESPData(ESPCache, player) end)
+    end))
+
+    local Window = Library:CreateWindow({
+        Title = 'Universal', Center = true, AutoShow = true, TabPadding = 8, MenuFadeTime = 0.2
+    })
+
+    local Toggles = getgenv().Toggles
+    local Options = getgenv().Options
+
+    local Tabs = {
+        Combat = Window:AddTab('Combat'), Visuals = Window:AddTab('Visuals'), Settings = Window:AddTab('Settings')
+    }
+
+    local SilentAimGroup = Tabs.Combat:AddLeftGroupbox('Silent Aim')
+    local PlayerESPGroup = Tabs.Visuals:AddLeftGroupbox('Player ESP')
+    local WorldGroup = Tabs.Visuals:AddLeftGroupbox('World')
+    local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
+
+    SilentAimGroup:AddToggle('SilentAimEnabled', { Text = 'Enable', Default = false }):AddKeyPicker('SilentAimKeybind', { Default = 'NONE', SyncToggleState = true, Mode = 'Toggle', Text = 'Silent Aim' })
+    SilentAimGroup:AddToggle('TargetAllHumanoids', { Text = 'Target All Humanoids', Default = false })
+    SilentAimGroup:AddDropdown('SilentAimMethod', { Values = { 'Raycast', 'Mouse.Hit', 'FindPartOnRay', 'FindPartOnRayWithWhitelist', 'FindPartOnRayWithIgnoreList' }, Default = 1, Multi = false, Text = 'Silent Aim Method' })
+    SilentAimGroup:AddDropdown('TargetPriority', { Values = { 'Closest to Mouse', 'Lowest Health', 'Closest Distance' }, Default = 1, Multi = false, Text = 'Target Priority' })
+    SilentAimGroup:AddSlider('Hitchance', { Text = 'Hitchance', Default = 100, Min = 0, Max = 100, Rounding = 0, Compact = false })
+    SilentAimGroup:AddDropdown('Hitpart', { Values = { 'Head', 'HumanoidRootPart', 'Random' }, Default = 1, Multi = false, Text = 'Hitpart' })
+    SilentAimGroup:AddToggle('VisibleCheck', { Text = 'Visible Check', Default = false })
+    SilentAimGroup:AddToggle('InvisibleCheck', { Text = 'Invisible Check', Default = false })
+
+    local TeamNames = {}
+    for _, team in ipairs(Teams:GetTeams()) do
+        table.insert(TeamNames, team.Name)
+    end
+    table.sort(TeamNames)
+
+    SilentAimGroup:AddDropdown('IgnoredTeams', { Values = TeamNames, Default = 0, Multi = true, Text = 'Ignored Teams' })
+
+    local function UpdateTeamDropdown()
+        pcall(function()
+            local newTeams = {}
+            for _, team in ipairs(Teams:GetTeams()) do
+                table.insert(newTeams, team.Name)
+            end
+            table.sort(newTeams)
+            Options.IgnoredTeams:SetValues(newTeams)
+        end)
+    end
+
+    table.insert(Connections, Teams.ChildAdded:Connect(UpdateTeamDropdown))
+    table.insert(Connections, Teams.ChildRemoved:Connect(UpdateTeamDropdown))
+
+    local FOVOutlineToggle = SilentAimGroup:AddToggle('FOVOutline', { Text = 'FOV Outline', Default = false })
+    FOVOutlineToggle:AddColorPicker('FOVOutlineColor', { Default = Color3.fromRGB(255, 255, 255) })
+    local FOVFilledToggle = SilentAimGroup:AddToggle('FOVFilled', { Text = 'FOV Filled', Default = false })
+    FOVFilledToggle:AddColorPicker('FOVFilledColor', { Default = Color3.fromRGB(255, 255, 255) })
+
+    SilentAimGroup:AddSlider('FOVRadius', { Text = 'FOV Radius', Default = 100, Min = 0, Max = 600, Rounding = 0 })
+    SilentAimGroup:AddSlider('FOVThickness', { Text = 'FOV Thickness', Default = 1, Min = 1, Max = 10, Rounding = 0 })
+    SilentAimGroup:AddSlider('FOVNumSides', { Text = 'FOV Num Sides', Default = 32, Min = 10, Max = 60, Rounding = 0 })
+    SilentAimGroup:AddSlider('FOVFilledTransparency', { Text = 'FOV Filled Transparency', Default = 0.5, Min = 0, Max = 1, Rounding = 2 })
+    SilentAimGroup:AddToggle('TracerEnabled', { Text = 'Enable Tracer', Default = false }):AddColorPicker('TracerColor', { Default = Color3.fromRGB(255, 255, 255) })
+    SilentAimGroup:AddSlider('TracerThickness', { Text = 'Tracer Thickness', Default = 1, Min = 1, Max = 10, Rounding = 0 })
+
+    PlayerESPGroup:AddToggle('ESPEnabled', { Text = 'Enable', Default = false })
+    PlayerESPGroup:AddToggle('ESPTeamCheck', { Text = 'Team Check', Default = false })
+    PlayerESPGroup:AddToggle('ESPVisibleCheck', { Text = 'Visible Check', Default = false })
+    PlayerESPGroup:AddToggle('ESPInvisibleCheck', { Text = 'Invisible Check', Default = false })
+    PlayerESPGroup:AddToggle('ESPTargetAllHumanoids', { Text = 'Target All Humanoids', Default = false })
+    PlayerESPGroup:AddToggle('ESPTeamColor', { Text = 'Use Team Color', Default = false })
+    PlayerESPGroup:AddToggle('ESPBox', { Text = 'Box', Default = false }):AddColorPicker('BoxColor', { Default = Color3.fromRGB(255, 255, 255) })
+    PlayerESPGroup:AddDropdown('ESPBoxType', { Values = { 'Corner', 'Default' }, Default = 2, Multi = false, Text = 'Box Type' })
+    PlayerESPGroup:AddToggle('ESPBoxFill', { Text = 'Box Fill', Default = false }):AddColorPicker('BoxFillColor', { Default = Color3.fromRGB(255, 255, 255) })
+    PlayerESPGroup:AddSlider('ESPBoxFillTransparency', { Text = 'Box Fill Transparency', Default = 0.5, Min = 0, Max = 1, Rounding = 2 })
+    PlayerESPGroup:AddToggle('ESPSkeleton', { Text = 'Skeleton', Default = false }):AddColorPicker('SkeletonColor', { Default = Color3.fromRGB(0, 255, 120) })
+    PlayerESPGroup:AddToggle('ESPName', { Text = 'Name', Default = false }):AddColorPicker('NameColor', { Default = Color3.fromRGB(255, 255, 255) })
+    PlayerESPGroup:AddToggle('ESPTeamName', { Text = 'Team Name', Default = false })
+    PlayerESPGroup:AddToggle('ESPDistance', { Text = 'Distance', Default = false })
+    PlayerESPGroup:AddToggle('ESPHealth', { Text = 'Health Bar', Default = false })
+    PlayerESPGroup:AddToggle('ESPHealthGradient', { Text = 'Health Gradient', Default = false })
+    PlayerESPGroup:AddToggle('ESPHealthText', { Text = 'Health Text', Default = false })
+    PlayerESPGroup:AddToggle('ESPTool', { Text = 'Equipped Tool', Default = false })
+    PlayerESPGroup:AddToggle('ESPTracer', { Text = 'Tracer', Default = false }):AddColorPicker('TracerColorESP', { Default = Color3.fromRGB(255, 255, 255) })
+    PlayerESPGroup:AddDropdown('ESPTracerOrigin', { Values = { 'Mouse', 'Top Center', 'Bottom Center' }, Default = 3, Multi = false, Text = 'Tracer Origin' })
+    PlayerESPGroup:AddSlider('ESPTracerThickness', { Text = 'Tracer Thickness', Default = 1, Min = 1, Max = 10, Rounding = 0 })
+    PlayerESPGroup:AddToggle('OffscreenArrows', { Text = 'Off-Screen Arrows', Default = false }):AddColorPicker('ArrowColor', { Default = Color3.fromRGB(255, 255, 255) })
+    PlayerESPGroup:AddSlider('ArrowRadius', { Text = 'Arrow Radius', Default = 150, Min = 50, Max = 500, Rounding = 0 })
+    PlayerESPGroup:AddSlider('ArrowSize', { Text = 'Arrow Size', Default = 15, Min = 5, Max = 50, Rounding = 0 })
+
+    WorldGroup:AddToggle('Fullbright', { Text = 'Fullbright', Default = false })
+    WorldGroup:AddToggle('RemoveParticles', { Text = 'Remove Particles', Default = false }):OnChanged(function()
+        pcall(function()
+            if Toggles.RemoveParticles.Value then
+                for _, v in ipairs(Workspace:GetDescendants()) do
+                    if v:IsA("ParticleEmitter") then
+                        local current = v
+                        local hasHumanoid = false
+                        while current and current ~= Workspace do
+                            if current:FindFirstChildOfClass("Humanoid") then
+                                hasHumanoid = true
+                                break
+                            end
+                            current = current.Parent
+                        end
+                        if not hasHumanoid then v:Destroy() end
+                    end
+                end
+            end
+        end)
+    end)
+
+    table.insert(Connections, Workspace.DescendantAdded:Connect(function(v)
+        pcall(function()
+            if Toggles.RemoveParticles and Toggles.RemoveParticles.Value and v:IsA("ParticleEmitter") then
+                task.defer(function()
+                    pcall(function()
+                        if v.Parent then
+                            local current = v
+                            local hasHumanoid = false
+                            while current and current ~= Workspace do
+                                if current:FindFirstChildOfClass("Humanoid") then
+                                    hasHumanoid = true
+                                    break
+                                end
+                                current = current.Parent
+                            end
+                            if not hasHumanoid then v:Destroy() end
+                        end
+                    end)
+                end)
+            end
+        end)
+    end))
+
+    MenuGroup:AddToggle('WatermarkToggle', { Text = 'Watermark', Default = false }):OnChanged(function()
+        pcall(function() Library:SetWatermarkVisibility(Toggles.WatermarkToggle.Value) end)
+    end)
+
+    Library:SetWatermark('Universal Client')
+    Library:SetWatermarkVisibility(false)
+    ThemeManager:SetLibrary(Library)
+    SaveManager:SetLibrary(Library)
+    ThemeManager:SetFolder('Universal')
+    SaveManager:SetFolder('Universal')
+    SaveManager:IgnoreThemeSettings()
+    ThemeManager:ApplyToTab(Tabs.Settings)
+    SaveManager:BuildConfigSection(Tabs.Settings)
+
+    local function hideVisuals(data)
+        pcall(function()
+            for i = 1, 14 do setDrawingProp(data.Skeleton[i], "Visible", false) end
+            for i = 1, 8 do setDrawingProp(data.CornerBox[i], "Visible", false) end
+            for i = 1, 15 do setDrawingProp(data.HealthSegments[i], "Visible", false) end
+            setDrawingProp(data.Box, "Visible", false)
+            setDrawingProp(data.BoxFill, "Visible", false)
+            setDrawingProp(data.HealthBarBg, "Visible", false)
+            setDrawingProp(data.HealthBar, "Visible", false)
+            setDrawingProp(data.NameTag, "Visible", false)
+            setDrawingProp(data.TeamTag, "Visible", false)
+            setDrawingProp(data.DistanceTag, "Visible", false)
+            setDrawingProp(data.HealthTextTag, "Visible", false)
+            setDrawingProp(data.ToolTag, "Visible", false)
+            setDrawingProp(data.OffscreenArrow, "Visible", false)
+            setDrawingProp(data.Tracer, "Visible", false)
+        end)
+    end
+
+    local function validateCache(entity, data)
+        local success, result = pcall(function()
+            local isPlayer = typeof(entity) == "Instance" and entity:IsA("Player")
+            local character
+            
+            if isPlayer then
+                character = entity.Character
+            else
+                character = entity
+            end
+            
+            if not character or not character.Parent then
+                data.CachedParts = nil
+                return nil
+            end
+
+            if data.CachedParts and data.CachedParts.Character == character and data.CachedParts.HRP and data.CachedParts.HRP.Parent and data.CachedParts.Humanoid and data.CachedParts.Humanoid.Parent then
+                return data.CachedParts
+            end
+
+            local hrp = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart or character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            
+            if not hrp or not humanoid then
+                data.CachedParts = nil
+                return nil
+            end
+
+            local isR15 = character:FindFirstChild("UpperTorso") ~= nil
+            local currentBones = isR15 and R15_BONES or R6_BONES
+            local boneParts = {}
+
+            for i, bonePair in ipairs(currentBones) do
+                boneParts[i] = {
+                    character:FindFirstChild(bonePair[1]),
+                    character:FindFirstChild(bonePair[2])
+                }
+            end
+
+            data.CachedParts = {
+                HRP = hrp,
+                Humanoid = humanoid,
+                Head = character:FindFirstChild("Head"),
+                BoneParts = boneParts,
+                Character = character,
+                IsPlayer = isPlayer
+            }
+            
+            return data.CachedParts
+        end)
+        
+        if success then return result else return nil end
+    end
+
+    local function checkVisibility(startPos, endPos, character, currentCamera)
+        local success, result = pcall(function()
+            local obscuring = currentCamera:GetPartsObscuringTarget({startPos, endPos}, filterList)
+            for i = 1, #obscuring do
+                local part = obscuring[i]
+                if not part:IsDescendantOf(character) and part.Transparency < 0.5 and part.CanCollide then
+                    return false
+                end
+            end
+            return true
+        end)
+        return success and result or false
+    end
+
+    local function getClosestCharacterToMouse(mousePos, currentCamera, skipMultipoint)
+        local success, r1, r2, r3 = pcall(function()
+            if not currentCamera then return nil, nil, nil end
+
+            local fovRadiusSq = Options.FOVRadius.Value * Options.FOVRadius.Value
+            local visibleCheck = Toggles.VisibleCheck.Value
+            local targetPartName = Options.Hitpart.Value
+            local priority = Options.TargetPriority.Value
+            local targetAllHumanoids = Toggles.TargetAllHumanoids.Value
+            local ignoredTeams = Options.IgnoredTeams.Value
+            local invisibleCheck = Toggles.InvisibleCheck.Value
+
+            local localChar = LocalPlayer.Character
+            table.clear(filterList)
+            table.clear(entitiesList)
+            table.clear(potentialTargetsList)
+
+            table.insert(filterList, currentCamera)
+            if localChar then table.insert(filterList, localChar) end
+            if rayExceptionFolder then
+                table.insert(filterList, rayExceptionFolder)
+            elseif debrisFolder then
+                table.insert(filterList, debrisFolder)
+            end
+            sharedRayParams.FilterDescendantsInstances = filterList
+
+            local camCFramePos = currentCamera.CFrame.Position
+
+            for entity, data in pairs(ESPCache) do
+                local cached = validateCache(entity, data)
+                if cached and cached.Humanoid.Health > 0 then
+                    if not cached.IsPlayer and not targetAllHumanoids then continue end
+                    if cached.IsPlayer and entity.Team then
+                        if ignoredTeams and ignoredTeams[entity.Team.Name] then continue end
+                    end
+                    if invisibleCheck and cached.Head and cached.Head.Transparency >= 0.5 then continue end
+                    table.insert(entitiesList, {
+                        character = cached.Character,
+                        head = cached.Head,
+                        hrp = cached.HRP,
+                        humanoid = cached.Humanoid
                     })
                 end
             end
-        end
-    end
 
-    table.sort(potentialTargetsList, function(a, b)
-        return a.distanceSq < b.distanceSq
-    end)
-
-    for i = 1, #potentialTargetsList do
-        local target = potentialTargetsList[i]
-        if visibleCheck then
-            local isVisible = checkVisibility(camCFramePos, target.hitPos, target.character)
-            if isVisible then
-                return target.pos2D, target.part, target.hitPos
-            end
-        else
-            return target.pos2D, target.part, target.hitPos
-        end
-    end
-
-    return nil, nil, nil
-end
-
-local fullbrightConnection
-local function updateFullbright()
-    if Toggles.Fullbright.Value then
-        if Lighting.Brightness ~= 2 then Lighting.Brightness = 2 end
-        if Lighting.ClockTime ~= 14 then Lighting.ClockTime = 14 end
-        if Lighting.FogEnd ~= 100000 then Lighting.FogEnd = 100000 end
-        if Lighting.GlobalShadows ~= false then Lighting.GlobalShadows = false end
-        if Lighting.OutdoorAmbient ~= Color3.fromRGB(128, 128, 128) then Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128) end
-    end
-end
-
-Toggles.Fullbright:OnChanged(function()
-    if Toggles.Fullbright.Value then
-        OriginalLighting.Brightness = Lighting.Brightness
-        OriginalLighting.ClockTime = Lighting.ClockTime
-        OriginalLighting.FogEnd = Lighting.FogEnd
-        OriginalLighting.GlobalShadows = Lighting.GlobalShadows
-        OriginalLighting.OutdoorAmbient = Lighting.OutdoorAmbient
-        updateFullbright()
-        fullbrightConnection = Lighting.Changed:Connect(updateFullbright)
-    else
-        if fullbrightConnection then
-            fullbrightConnection:Disconnect()
-            fullbrightConnection = nil
-        end
-        if OriginalLighting.Brightness then
-            Lighting.Brightness = OriginalLighting.Brightness
-            Lighting.ClockTime = OriginalLighting.ClockTime
-            Lighting.FogEnd = OriginalLighting.FogEnd
-            Lighting.GlobalShadows = OriginalLighting.GlobalShadows
-            Lighting.OutdoorAmbient = OriginalLighting.OutdoorAmbient
-        end
-    end
-end)
-
-local function updateVisualsForCache(cacheTable, currentCamera, camPos)
-    local boxEnabled = Toggles.ESPBox.Value
-    local skeletonEnabled = Toggles.ESPSkeleton.Value
-    local nameEnabled = Toggles.ESPName.Value
-    local distanceEnabled = Toggles.ESPDistance.Value
-    local healthEnabled = Toggles.ESPHealth.Value
-    local healthTextEnabled = Toggles.ESPHealthText.Value
-    
-    local boxColorVal = Options.BoxColor.Value
-    local nameColorVal = Options.NameColor.Value
-    local skelColorVal = Options.SkeletonColor.Value
-    local boxTypeVal = Options.ESPBoxType.Value
-
-    local teamColorEnabled = Toggles.ESPTeamColor.Value
-    local toolEnabled = Toggles.ESPTool.Value
-
-    local needsBox = boxEnabled or nameEnabled or distanceEnabled or healthEnabled or toolEnabled or healthTextEnabled
-
-    for entity, data in pairs(cacheTable) do
-        local cached = validateCache(entity, data)
-        if cached and cached.Humanoid.Health > 0 then
-            local hrp = cached.HRP
-            local humanoid = cached.Humanoid
-            local character = cached.Character
-            local distanceToCam = (camPos - hrp.Position).Magnitude
-            
-            local hasTeamColor = false
-            local espColor = Color3.new(1, 1, 1)
-            
-            if teamColorEnabled and entity.Team then
-                espColor = entity.TeamColor.Color
-                hasTeamColor = true
-            end
-
-            local currentBoxColor = hasTeamColor and espColor or (boxColorVal or espColor)
-            local currentNameColor = hasTeamColor and espColor or (nameColorVal or espColor)
-            local currentSkeletonColor = hasTeamColor and espColor or (skelColorVal or espColor)
-
-            local topPos, bottomPos, onScreenTop, onScreenBottom
-            local isBoxVisible = false
-            
-            if needsBox then
-                topPos, onScreenTop = currentCamera:WorldToViewportPoint(hrp.Position + BOX_TOP_OFFSET)
-                bottomPos, onScreenBottom = currentCamera:WorldToViewportPoint(hrp.Position - BOX_BOTTOM_OFFSET)
-                isBoxVisible = onScreenTop or onScreenBottom
-            end
-
-            if isBoxVisible then
-                local boxHeight = math.abs(topPos.Y - bottomPos.Y)
-                local boxWidth = boxHeight * 0.625
-                local boxX = topPos.X - (boxWidth / 2)
-                local boxY = topPos.Y
-
-                if boxEnabled then
-                    if boxTypeVal == 'Corner' then
-                        setDrawingProp(data.Box, "Visible", false)
-                        local lineW = boxWidth / 3
-                        local lineH = boxHeight / 4
-                        
-                        data.CornerBox[1].From = Vector2.new(boxX, boxY)
-                        data.CornerBox[1].To = Vector2.new(boxX + lineW, boxY)
-                        data.CornerBox[2].From = Vector2.new(boxX, boxY)
-                        data.CornerBox[2].To = Vector2.new(boxX, boxY + lineH)
-                        data.CornerBox[3].From = Vector2.new(boxX + boxWidth, boxY)
-                        data.CornerBox[3].To = Vector2.new(boxX + boxWidth - lineW, boxY)
-                        data.CornerBox[4].From = Vector2.new(boxX + boxWidth, boxY)
-                        data.CornerBox[4].To = Vector2.new(boxX + boxWidth, boxY + lineH)
-                        data.CornerBox[5].From = Vector2.new(boxX, boxY + boxHeight)
-                        data.CornerBox[5].To = Vector2.new(boxX + lineW, boxY + boxHeight)
-                        data.CornerBox[6].From = Vector2.new(boxX, boxY + boxHeight)
-                        data.CornerBox[6].To = Vector2.new(boxX, boxY + boxHeight - lineH)
-                        data.CornerBox[7].From = Vector2.new(boxX + boxWidth, boxY + boxHeight)
-                        data.CornerBox[7].To = Vector2.new(boxX + boxWidth - lineW, boxY + boxHeight)
-                        data.CornerBox[8].From = Vector2.new(boxX + boxWidth, boxY + boxHeight)
-                        data.CornerBox[8].To = Vector2.new(boxX + boxWidth, boxY + boxHeight - lineH)
-                        
-                        for i = 1, 8 do
-                            setDrawingProp(data.CornerBox[i], "Color", currentBoxColor)
-                            setDrawingProp(data.CornerBox[i], "Visible", true)
+            local now = os.clock()
+            for i = 1, #entitiesList do
+                local entityObj = entitiesList[i]
+                local targetPart
+                
+                if not TargetCache[entityObj.character] or not entityObj.character.Parent then
+                    TargetCache[entityObj.character] = { part = nil, lastUpdate = 0 }
+                end
+                
+                local cache = TargetCache[entityObj.character]
+                if now - cache.lastUpdate >= 0.5 or not cache.part or not cache.part.Parent then
+                    if targetPartName == 'Random' then
+                        local parts = {}
+                        for _, v in ipairs(entityObj.character:GetChildren()) do
+                            if v:IsA("BasePart") and v.Name ~= "HumanoidRootPart" then
+                                table.insert(parts, v)
+                            end
+                        end
+                        if #parts > 0 then
+                            cache.part = parts[math.random(1, #parts)]
+                        else
+                            cache.part = entityObj.hrp
                         end
                     else
-                        for i = 1, 8 do setDrawingProp(data.CornerBox[i], "Visible", false) end
-                        setDrawingProp(data.Box, "Position", Vector2.new(boxX, boxY))
-                        setDrawingProp(data.Box, "Size", Vector2.new(boxWidth, boxHeight))
-                        setDrawingProp(data.Box, "Color", currentBoxColor)
-                        setDrawingProp(data.Box, "Visible", true)
+                        cache.part = targetPartName == 'Head' and entityObj.head or entityObj.hrp
+                    end
+                    cache.lastUpdate = now
+                end
+                
+                targetPart = cache.part
+                if not targetPart or not targetPart.Parent then continue end
+
+                local rootScreenPos, rootOnScreen = currentCamera:WorldToViewportPoint(targetPart.Position)
+                if rootOnScreen then
+                    local rx, ry = rootScreenPos.X - mousePos.X, rootScreenPos.Y - mousePos.Y
+                    local rootDistSq = (rx * rx) + (ry * ry)
+                    if rootDistSq > (fovRadiusSq * 3) then continue end
+                end
+
+                if not skipMultipoint then
+                    local size = targetPart.Size * 0.8
+                    local cf = targetPart.CFrame
+                    local hx, hy, hz = size.X / 2, size.Y / 2, size.Z / 2
+                     
+                    for _, offset in ipairs(MULTIPOINT_OFFSETS) do
+                        local point = cf * v3new(hx * offset.X, hy * offset.Y, hz * offset.Z)
+                        local screenPos, onScreen = currentCamera:WorldToViewportPoint(point)
+                        
+                        if onScreen then
+                            local px, py = screenPos.X - mousePos.X, screenPos.Y - mousePos.Y
+                            local distSq = (px * px) + (py * py)
+                            
+                            if distSq <= fovRadiusSq then
+                                table.insert(potentialTargetsList, {
+                                    distanceSq = distSq, pos2D = v2new(screenPos.X, screenPos.Y),
+                                    part = targetPart, hitPos = point, character = entityObj.character,
+                                    health = entityObj.humanoid.Health, distance3D = (point - camCFramePos).Magnitude
+                                })
+                            end
+                        end
                     end
                 else
-                    setDrawingProp(data.Box, "Visible", false)
-                    for i = 1, 8 do setDrawingProp(data.CornerBox[i], "Visible", false) end
-                end
-
-                if nameEnabled then
-                    setDrawingProp(data.NameTag, "Text", character.Name)
-                    setDrawingProp(data.NameTag, "Position", Vector2.new(topPos.X, boxY - 16))
-                    setDrawingProp(data.NameTag, "Color", currentNameColor)
-                    setDrawingProp(data.NameTag, "Visible", true)
-                else
-                    setDrawingProp(data.NameTag, "Visible", false)
-                end
-
-                local yOffset = bottomPos.Y + 2
-                
-                if distanceEnabled then
-                    setDrawingProp(data.DistanceTag, "Text", tostring(math.floor(distanceToCam)) .. "m")
-                    setDrawingProp(data.DistanceTag, "Position", Vector2.new(topPos.X, yOffset))
-                    setDrawingProp(data.DistanceTag, "Color", currentNameColor)
-                    setDrawingProp(data.DistanceTag, "Visible", true)
-                    yOffset = yOffset + 14
-                else
-                    setDrawingProp(data.DistanceTag, "Visible", false)
-                end
-
-                if toolEnabled then
-                    local tool = character:FindFirstChildOfClass("Tool")
-                    setDrawingProp(data.ToolTag, "Text", tool and tool.Name or "None")
-                    setDrawingProp(data.ToolTag, "Position", Vector2.new(topPos.X, yOffset))
-                    setDrawingProp(data.ToolTag, "Color", currentNameColor)
-                    setDrawingProp(data.ToolTag, "Visible", true)
-                else
-                    setDrawingProp(data.ToolTag, "Visible", false)
-                end
-
-                local healthPercent = math.clamp(humanoid.Health / (humanoid.MaxHealth > 0 and humanoid.MaxHealth or 100), 0, 1)
-                local barWidth = 3
-                local barOffset = 5
-                local barX = boxX - barOffset - barWidth
-                local healthHeight = boxHeight * healthPercent
-                local healthColor = Color3.fromRGB(255, 0, 0):Lerp(Color3.fromRGB(0, 255, 0), healthPercent)
-
-                if healthEnabled then
-                    setDrawingProp(data.HealthBarBg, "Position", Vector2.new(barX, boxY))
-                    setDrawingProp(data.HealthBarBg, "Size", Vector2.new(barWidth, boxHeight))
-                    setDrawingProp(data.HealthBarBg, "Visible", true)
+                    local point = targetPart.Position
+                    local screenPos, onScreen = currentCamera:WorldToViewportPoint(point)
                     
-                    setDrawingProp(data.HealthBar, "Position", Vector2.new(barX, boxY + (boxHeight - healthHeight)))
-                    setDrawingProp(data.HealthBar, "Size", Vector2.new(barWidth, healthHeight))
-                    setDrawingProp(data.HealthBar, "Color", healthColor)
-                    setDrawingProp(data.HealthBar, "Visible", true)
-                else
-                    setDrawingProp(data.HealthBarBg, "Visible", false)
-                    setDrawingProp(data.HealthBar, "Visible", false)
+                    if onScreen then
+                        local px, py = screenPos.X - mousePos.X, screenPos.Y - mousePos.Y
+                        local distSq = (px * px) + (py * py)
+                        
+                        if distSq <= fovRadiusSq then
+                            table.insert(potentialTargetsList, {
+                                distanceSq = distSq, pos2D = v2new(screenPos.X, screenPos.Y),
+                                part = targetPart, hitPos = point, character = entityObj.character,
+                                health = entityObj.humanoid.Health, distance3D = (point - camCFramePos).Magnitude
+                            })
+                        end
+                    end
                 end
-
-                if healthTextEnabled then
-                    setDrawingProp(data.HealthTextTag, "Text", tostring(math.floor(humanoid.Health)) .. " HP")
-                    setDrawingProp(data.HealthTextTag, "Position", Vector2.new(barX - 18, boxY + (boxHeight - healthHeight) - 6))
-                    setDrawingProp(data.HealthTextTag, "Color", healthColor)
-                    setDrawingProp(data.HealthTextTag, "Visible", true)
-                else
-                    setDrawingProp(data.HealthTextTag, "Visible", false)
-                end
-
-            else
-                setDrawingProp(data.Box, "Visible", false)
-                for i = 1, 8 do setDrawingProp(data.CornerBox[i], "Visible", false) end
-                setDrawingProp(data.HealthBarBg, "Visible", false)
-                setDrawingProp(data.HealthBar, "Visible", false)
-                setDrawingProp(data.NameTag, "Visible", false)
-                setDrawingProp(data.DistanceTag, "Visible", false)
-                setDrawingProp(data.HealthTextTag, "Visible", false)
-                setDrawingProp(data.ToolTag, "Visible", false)
             end
 
-            if skeletonEnabled and distanceToCam <= 1000 then
-                local currentBones = cached.BoneParts
-                for i, line in ipairs(data.Skeleton) do
-                    local parts = currentBones[i]
-                    if parts then
-                        local partA, partB = parts[1], parts[2]
-                        if partA and partB and partA.Parent and partB.Parent then
-                            local posA, onScreenA = currentCamera:WorldToViewportPoint(partA.Position)
-                            local posB, onScreenB = currentCamera:WorldToViewportPoint(partB.Position)
-                            
-                            if onScreenA and onScreenB then
-                                line.From = Vector2.new(posA.X, posA.Y)
-                                line.To = Vector2.new(posB.X, posB.Y)
-                                setDrawingProp(line, "Color", currentSkeletonColor)
-                                setDrawingProp(line, "Visible", true)
+            table.sort(potentialTargetsList, function(a, b)
+                if priority == 'Lowest Health' then return a.health < b.health
+                elseif priority == 'Closest Distance' then return a.distance3D < b.distance3D
+                else return a.distanceSq < b.distanceSq end
+            end)
+
+            for i = 1, #potentialTargetsList do
+                local target = potentialTargetsList[i]
+                if visibleCheck then
+                    if checkVisibility(camCFramePos, target.hitPos, target.character, currentCamera) then
+                        return target.pos2D, target.part, target.hitPos
+                    end
+                else
+                    return target.pos2D, target.part, target.hitPos
+                end
+            end
+
+            return nil, nil, nil
+        end)
+        
+        if success then return r1, r2, r3 else return nil, nil, nil end
+    end
+
+    local fullbrightConnection
+    local function updateFullbright()
+        pcall(function()
+            if Toggles.Fullbright.Value then
+                if Lighting.Brightness ~= 2 then Lighting.Brightness = 2 end
+                if Lighting.ClockTime ~= 14 then Lighting.ClockTime = 14 end
+                if Lighting.FogEnd ~= 100000 then Lighting.FogEnd = 100000 end
+                if Lighting.GlobalShadows ~= false then Lighting.GlobalShadows = false end
+                if Lighting.OutdoorAmbient ~= Color3.fromRGB(128, 128, 128) then Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128) end
+            end
+        end)
+    end
+
+    Toggles.Fullbright:OnChanged(function()
+        pcall(function()
+            if Toggles.Fullbright.Value then
+                OriginalLighting.Brightness = Lighting.Brightness
+                OriginalLighting.ClockTime = Lighting.ClockTime
+                OriginalLighting.FogEnd = Lighting.FogEnd
+                OriginalLighting.GlobalShadows = Lighting.GlobalShadows
+                OriginalLighting.OutdoorAmbient = Lighting.OutdoorAmbient
+                updateFullbright()
+                fullbrightConnection = Lighting.Changed:Connect(updateFullbright)
+            else
+                if fullbrightConnection then
+                    fullbrightConnection:Disconnect()
+                    fullbrightConnection = nil
+                end
+                if OriginalLighting.Brightness then
+                    Lighting.Brightness = OriginalLighting.Brightness
+                    Lighting.ClockTime = OriginalLighting.ClockTime
+                    Lighting.FogEnd = OriginalLighting.FogEnd
+                    Lighting.GlobalShadows = OriginalLighting.GlobalShadows
+                    Lighting.OutdoorAmbient = OriginalLighting.OutdoorAmbient
+                end
+            end
+        end)
+    end)
+
+    local function updateVisualsForCache(cacheTable, currentCamera, camPos)
+        pcall(function()
+            local boxEnabled = Toggles.ESPBox.Value
+            local skeletonEnabled = Toggles.ESPSkeleton.Value
+            local nameEnabled = Toggles.ESPName.Value
+            local teamNameEnabled = Toggles.ESPTeamName.Value
+            local distanceEnabled = Toggles.ESPDistance.Value
+            local healthEnabled = Toggles.ESPHealth.Value
+            local healthGradientEnabled = Toggles.ESPHealthGradient.Value
+            local healthTextEnabled = Toggles.ESPHealthText.Value
+            local arrowsEnabled = Toggles.OffscreenArrows.Value
+            local boxFillEnabled = Toggles.ESPBoxFill.Value
+            local tracerEnabled = Toggles.ESPTracer.Value
+            
+            local boxColorVal = Options.BoxColor.Value
+            local nameColorVal = Options.NameColor.Value
+            local skelColorVal = Options.SkeletonColor.Value
+            local boxTypeVal = Options.ESPBoxType.Value
+            local arrowRadiusVal = Options.ArrowRadius.Value
+            local arrowSizeVal = Options.ArrowSize.Value
+            local arrowColorVal = Options.ArrowColor.Value
+            local boxFillColorVal = Options.BoxFillColor.Value
+            local boxFillTransVal = Options.ESPBoxFillTransparency.Value
+            local tracerOriginVal = Options.ESPTracerOrigin.Value
+            local tracerColorVal = Options.TracerColorESP.Value
+            local tracerThicknessVal = Options.ESPTracerThickness.Value
+
+            local teamColorEnabled = Toggles.ESPTeamColor.Value
+            local toolEnabled = Toggles.ESPTool.Value
+            local espTargetAllHumanoids = Toggles.ESPTargetAllHumanoids.Value
+            local espTeamCheck = Toggles.ESPTeamCheck.Value
+            local espInvisibleCheck = Toggles.ESPInvisibleCheck.Value
+            local espVisibleCheck = Toggles.ESPVisibleCheck.Value
+
+            local needsBox = boxEnabled or nameEnabled or distanceEnabled or healthEnabled or toolEnabled or healthTextEnabled or teamNameEnabled or boxFillEnabled or tracerEnabled
+
+            table.clear(filterList)
+            table.insert(filterList, currentCamera)
+            if LocalPlayer.Character then table.insert(filterList, LocalPlayer.Character) end
+            if rayExceptionFolder then table.insert(filterList, rayExceptionFolder) elseif debrisFolder then table.insert(filterList, debrisFolder) end
+            sharedRayParams.FilterDescendantsInstances = filterList
+
+            for entity, data in pairs(cacheTable) do
+                local cached = validateCache(entity, data)
+                if cached and cached.Humanoid.Health > 0 then
+                    if not cached.IsPlayer and not espTargetAllHumanoids then
+                        hideVisuals(data)
+                        continue
+                    end
+                    
+                    if cached.IsPlayer and espTeamCheck and entity.Team and LocalPlayer.Team and entity.Team == LocalPlayer.Team then
+                        hideVisuals(data)
+                        continue
+                    end
+                    
+                    if espInvisibleCheck and cached.Head and cached.Head.Transparency >= 0.5 then
+                        hideVisuals(data)
+                        continue
+                    end
+                    
+                    if espVisibleCheck then
+                        if not checkVisibility(camPos, cached.HRP.Position, cached.Character, currentCamera) then
+                            hideVisuals(data)
+                            continue
+                        end
+                    end
+
+                    local hrp = cached.HRP
+                    local humanoid = cached.Humanoid
+                    local character = cached.Character
+                    local distanceToCam = (camPos - hrp.Position).Magnitude
+                    
+                    local hasTeamColor = false
+                    local espColor = Color3.new(1, 1, 1)
+                    
+                    if teamColorEnabled and cached.IsPlayer and entity.Team then
+                        espColor = entity.TeamColor.Color
+                        hasTeamColor = true
+                    end
+
+                    local currentBoxColor = hasTeamColor and espColor or (boxColorVal or espColor)
+                    local currentNameColor = hasTeamColor and espColor or (nameColorVal or espColor)
+                    local currentSkeletonColor = hasTeamColor and espColor or (skelColorVal or espColor)
+
+                    local topPos, bottomPos, onScreenTop, onScreenBottom
+                    local isBoxVisible = false
+                    
+                    if needsBox then
+                        topPos, onScreenTop = currentCamera:WorldToViewportPoint(hrp.Position + BOX_TOP_OFFSET)
+                        bottomPos, onScreenBottom = currentCamera:WorldToViewportPoint(hrp.Position - BOX_BOTTOM_OFFSET)
+                        isBoxVisible = onScreenTop or onScreenBottom
+                    end
+
+                    if arrowsEnabled and not isBoxVisible then
+                        local pointToObjectSpace = currentCamera.CFrame:PointToObjectSpace(hrp.Position)
+                        local angle = matan2(pointToObjectSpace.X, pointToObjectSpace.Y) - (mpi / 2)
+                        if pointToObjectSpace.Z > 0 then angle = angle + mpi end
+                        
+                        local cx = currentCamera.ViewportSize.X / 2
+                        local cy = currentCamera.ViewportSize.Y / 2
+                        
+                        local arrowCenter = v2new(cx + mcos(angle) * arrowRadiusVal, cy + msin(angle) * arrowRadiusVal)
+                        local p1 = arrowCenter + v2new(mcos(angle) * arrowSizeVal, msin(angle) * arrowSizeVal)
+                        local p2 = arrowCenter + v2new(mcos(angle - 2.5) * arrowSizeVal, msin(angle - 2.5) * arrowSizeVal)
+                        local p3 = arrowCenter + v2new(mcos(angle + 2.5) * arrowSizeVal, msin(angle + 2.5) * arrowSizeVal)
+                        
+                        setDrawingProp(data.OffscreenArrow, "PointA", p1)
+                        setDrawingProp(data.OffscreenArrow, "PointB", p2)
+                        setDrawingProp(data.OffscreenArrow, "PointC", p3)
+                        setDrawingProp(data.OffscreenArrow, "Color", arrowColorVal)
+                        setDrawingProp(data.OffscreenArrow, "Visible", true)
+                    else
+                        setDrawingProp(data.OffscreenArrow, "Visible", false)
+                    end
+
+                    if isBoxVisible then
+                        local boxHeight = mabs(topPos.Y - bottomPos.Y)
+                        local boxWidth = boxHeight * 0.625
+                        local boxX = topPos.X - (boxWidth / 2)
+                        local boxY = topPos.Y
+
+                        if boxEnabled then
+                            if boxTypeVal == 'Corner' then
+                                setDrawingProp(data.Box, "Visible", false)
+                                local lineW = boxWidth / 3
+                                local lineH = boxHeight / 4
+                                data.CornerBox[1].From = v2new(boxX, boxY)
+                                data.CornerBox[1].To = v2new(boxX + lineW, boxY)
+                                data.CornerBox[2].From = v2new(boxX, boxY)
+                                data.CornerBox[2].To = v2new(boxX, boxY + lineH)
+                                data.CornerBox[3].From = v2new(boxX + boxWidth, boxY)
+                                data.CornerBox[3].To = v2new(boxX + boxWidth - lineW, boxY)
+                                data.CornerBox[4].From = v2new(boxX + boxWidth, boxY)
+                                data.CornerBox[4].To = v2new(boxX + boxWidth, boxY + lineH)
+                                data.CornerBox[5].From = v2new(boxX, boxY + boxHeight)
+                                data.CornerBox[5].To = v2new(boxX + lineW, boxY + boxHeight)
+                                data.CornerBox[6].From = v2new(boxX, boxY + boxHeight)
+                                data.CornerBox[6].To = v2new(boxX, boxY + boxHeight - lineH)
+                                data.CornerBox[7].From = v2new(boxX + boxWidth, boxY + boxHeight)
+                                data.CornerBox[7].To = v2new(boxX + boxWidth - lineW, boxY + boxHeight)
+                                data.CornerBox[8].From = v2new(boxX + boxWidth, boxY + boxHeight)
+                                data.CornerBox[8].To = v2new(boxX + boxWidth, boxY + boxHeight - lineH)
+                                
+                                for i = 1, 8 do
+                                    setDrawingProp(data.CornerBox[i], "Color", currentBoxColor)
+                                    setDrawingProp(data.CornerBox[i], "Visible", true)
+                                end
+                            else
+                                for i = 1, 8 do setDrawingProp(data.CornerBox[i], "Visible", false) end
+                                setDrawingProp(data.Box, "Position", v2new(boxX, boxY))
+                                setDrawingProp(data.Box, "Size", v2new(boxWidth, boxHeight))
+                                setDrawingProp(data.Box, "Color", currentBoxColor)
+                                setDrawingProp(data.Box, "Visible", true)
+                            end
+                        else
+                            setDrawingProp(data.Box, "Visible", false)
+                            for i = 1, 8 do setDrawingProp(data.CornerBox[i], "Visible", false) end
+                        end
+
+                        if boxFillEnabled then
+                            setDrawingProp(data.BoxFill, "Position", v2new(boxX, boxY))
+                            setDrawingProp(data.BoxFill, "Size", v2new(boxWidth, boxHeight))
+                            setDrawingProp(data.BoxFill, "Color", boxFillColorVal)
+                            setDrawingProp(data.BoxFill, "Transparency", boxFillTransVal)
+                            setDrawingProp(data.BoxFill, "Visible", true)
+                        else
+                            setDrawingProp(data.BoxFill, "Visible", false)
+                        end
+
+                        if tracerEnabled then
+                            local origin = v2new(currentCamera.ViewportSize.X / 2, currentCamera.ViewportSize.Y)
+                            if tracerOriginVal == 'Top Center' then
+                                origin = v2new(currentCamera.ViewportSize.X / 2, 0)
+                            elseif tracerOriginVal == 'Mouse' then
+                                origin = UserInputService:GetMouseLocation()
+                            end
+                            data.Tracer.From = origin
+                            data.Tracer.To = v2new(boxX + (boxWidth / 2), bottomPos.Y)
+                            setDrawingProp(data.Tracer, "Color", tracerColorVal)
+                            setDrawingProp(data.Tracer, "Thickness", tracerThicknessVal)
+                            setDrawingProp(data.Tracer, "Visible", true)
+                        else
+                            setDrawingProp(data.Tracer, "Visible", false)
+                        end
+
+                        if nameEnabled then
+                            setDrawingProp(data.NameTag, "Text", character.Name)
+                            setDrawingProp(data.NameTag, "Position", v2new(topPos.X, boxY - 16))
+                            setDrawingProp(data.NameTag, "Color", currentNameColor)
+                            setDrawingProp(data.NameTag, "Visible", true)
+                        else
+                            setDrawingProp(data.NameTag, "Visible", false)
+                        end
+
+                        local yOffset = bottomPos.Y + 2
+                        
+                        if distanceEnabled then
+                            setDrawingProp(data.DistanceTag, "Text", tostring(mfloor(distanceToCam)) .. "m")
+                            setDrawingProp(data.DistanceTag, "Position", v2new(topPos.X, yOffset))
+                            setDrawingProp(data.DistanceTag, "Color", currentNameColor)
+                            setDrawingProp(data.DistanceTag, "Visible", true)
+                            yOffset = yOffset + 14
+                        else
+                            setDrawingProp(data.DistanceTag, "Visible", false)
+                        end
+
+                        if teamNameEnabled then
+                            setDrawingProp(data.TeamTag, "Text", cached.IsPlayer and entity.Team and entity.Team.Name or "None")
+                            setDrawingProp(data.TeamTag, "Position", v2new(topPos.X, yOffset))
+                            setDrawingProp(data.TeamTag, "Color", currentNameColor)
+                            setDrawingProp(data.TeamTag, "Visible", true)
+                            yOffset = yOffset + 14
+                        else
+                            setDrawingProp(data.TeamTag, "Visible", false)
+                        end
+
+                        if toolEnabled then
+                            local tool = character:FindFirstChildOfClass("Tool")
+                            setDrawingProp(data.ToolTag, "Text", tool and tool.Name or "None")
+                            setDrawingProp(data.ToolTag, "Position", v2new(topPos.X, yOffset))
+                            setDrawingProp(data.ToolTag, "Color", currentNameColor)
+                            setDrawingProp(data.ToolTag, "Visible", true)
+                            yOffset = yOffset + 14
+                        else
+                            setDrawingProp(data.ToolTag, "Visible", false)
+                        end
+
+                        local healthPercent = mclamp(humanoid.Health / (humanoid.MaxHealth > 0 and humanoid.MaxHealth or 100), 0, 1)
+                        local barWidth = 3
+                        local barOffset = 5
+                        local barX = boxX - barOffset - barWidth
+                        local healthHeight = boxHeight * healthPercent
+                        local healthColor = Color3.fromRGB(255, 0, 0):Lerp(Color3.fromRGB(0, 255, 0), healthPercent)
+
+                        if healthEnabled then
+                            if healthGradientEnabled then
+                                setDrawingProp(data.HealthBarBg, "Position", v2new(barX, boxY))
+                                setDrawingProp(data.HealthBarBg, "Size", v2new(barWidth, boxHeight))
+                                setDrawingProp(data.HealthBarBg, "Visible", true)
+                                setDrawingProp(data.HealthBar, "Visible", false)
+                                
+                                local segCount = 15
+                                local activeSegs = math.ceil(healthPercent * segCount)
+                                local segHeight = boxHeight / segCount
+                                
+                                for i = 1, 15 do
+                                    local seg = data.HealthSegments[i]
+                                    if i <= activeSegs then
+                                        local t = (i - 1) / (segCount - 1)
+                                        local segColor = Color3.fromRGB(255, 0, 0):Lerp(Color3.fromRGB(0, 255, 0), t)
+                                        local sY = boxY + boxHeight - (i * segHeight)
+                                        setDrawingProp(seg, "Position", v2new(barX, sY))
+                                        setDrawingProp(seg, "Size", v2new(barWidth, segHeight))
+                                        setDrawingProp(seg, "Color", segColor)
+                                        setDrawingProp(seg, "Visible", true)
+                                    else
+                                        setDrawingProp(seg, "Visible", false)
+                                    end
+                                end
+                            else
+                                for i = 1, 15 do setDrawingProp(data.HealthSegments[i], "Visible", false) end
+                                setDrawingProp(data.HealthBarBg, "Position", v2new(barX, boxY))
+                                setDrawingProp(data.HealthBarBg, "Size", v2new(barWidth, boxHeight))
+                                setDrawingProp(data.HealthBarBg, "Visible", true)
+                                
+                                setDrawingProp(data.HealthBar, "Position", v2new(barX, boxY + (boxHeight - healthHeight)))
+                                setDrawingProp(data.HealthBar, "Size", v2new(barWidth, healthHeight))
+                                setDrawingProp(data.HealthBar, "Color", healthColor)
+                                setDrawingProp(data.HealthBar, "Visible", true)
+                            end
+                        else
+                            setDrawingProp(data.HealthBarBg, "Visible", false)
+                            setDrawingProp(data.HealthBar, "Visible", false)
+                            for i = 1, 15 do setDrawingProp(data.HealthSegments[i], "Visible", false) end
+                        end
+
+                        if healthTextEnabled then
+                            setDrawingProp(data.HealthTextTag, "Text", tostring(mfloor(humanoid.Health)) .. " HP")
+                            setDrawingProp(data.HealthTextTag, "Position", v2new(barX - 18, boxY + (boxHeight - healthHeight) - 6))
+                            setDrawingProp(data.HealthTextTag, "Color", healthColor)
+                            setDrawingProp(data.HealthTextTag, "Visible", true)
+                        else
+                            setDrawingProp(data.HealthTextTag, "Visible", false)
+                        end
+
+                    else
+                        setDrawingProp(data.Box, "Visible", false)
+                        setDrawingProp(data.BoxFill, "Visible", false)
+                        setDrawingProp(data.Tracer, "Visible", false)
+                        for i = 1, 8 do setDrawingProp(data.CornerBox[i], "Visible", false) end
+                        setDrawingProp(data.HealthBarBg, "Visible", false)
+                        setDrawingProp(data.HealthBar, "Visible", false)
+                        for i = 1, 15 do setDrawingProp(data.HealthSegments[i], "Visible", false) end
+                        setDrawingProp(data.NameTag, "Visible", false)
+                        setDrawingProp(data.TeamTag, "Visible", false)
+                        setDrawingProp(data.DistanceTag, "Visible", false)
+                        setDrawingProp(data.HealthTextTag, "Visible", false)
+                        setDrawingProp(data.ToolTag, "Visible", false)
+                    end
+
+                    if skeletonEnabled and distanceToCam <= 1000 then
+                        local currentBones = cached.BoneParts
+                        for i, line in ipairs(data.Skeleton) do
+                            local parts = currentBones[i]
+                            if parts then
+                                local partA, partB = parts[1], parts[2]
+                                if partA and partB and partA.Parent and partB.Parent then
+                                    local posA, onScreenA = currentCamera:WorldToViewportPoint(partA.Position)
+                                    local posB, onScreenB = currentCamera:WorldToViewportPoint(partB.Position)
+                                    
+                                    if onScreenA and onScreenB then
+                                        line.From = v2new(posA.X, posA.Y)
+                                        line.To = v2new(posB.X, posB.Y)
+                                        setDrawingProp(line, "Color", currentSkeletonColor)
+                                        setDrawingProp(line, "Visible", true)
+                                    else
+                                        setDrawingProp(line, "Visible", false)
+                                    end
+                                else
+                                    setDrawingProp(line, "Visible", false)
+                                end
                             else
                                 setDrawingProp(line, "Visible", false)
                             end
-                        else
-                            setDrawingProp(line, "Visible", false)
                         end
                     else
-                        setDrawingProp(line, "Visible", false)
+                        for i = 1, 14 do setDrawingProp(data.Skeleton[i], "Visible", false) end
+                    end
+                else
+                    hideVisuals(data)
+                end
+            end
+        end)
+    end
+
+    local espWasEnabled = false
+    local silentAimTarget = { pos2D = nil, part = nil, hitPos = nil, willHit = false }
+
+    table.insert(Connections, RunService.RenderStepped:Connect(function()
+        pcall(function()
+            local currentCamera = Workspace.CurrentCamera
+            if not currentCamera then return end
+
+            local mousePos = UserInputService:GetMouseLocation()
+            local requireTarget = Toggles.SilentAimEnabled.Value or Toggles.TracerEnabled.Value
+            
+            if requireTarget then
+                local skipMultipoint = not Toggles.SilentAimEnabled.Value
+                local pos2D, hitPart, hitPos = getClosestCharacterToMouse(mousePos, currentCamera, skipMultipoint)
+                silentAimTarget.pos2D = pos2D
+                silentAimTarget.part = hitPart
+                silentAimTarget.hitPos = hitPos
+                silentAimTarget.willHit = CalculateChance(Options.Hitchance.Value)
+            else
+                silentAimTarget.pos2D = nil
+                silentAimTarget.part = nil
+                silentAimTarget.hitPos = nil
+                silentAimTarget.willHit = false
+            end
+
+            local outlineEnabled = Toggles.FOVOutline.Value
+            local filledEnabled = Toggles.FOVFilled.Value
+            local fovRadius = Options.FOVRadius.Value
+            local fovNumSides = Options.FOVNumSides.Value
+
+            setDrawingProp(FOVCircle, "Visible", outlineEnabled)
+            setDrawingProp(FOVFilledCircle, "Visible", filledEnabled)
+
+            if outlineEnabled then
+                setDrawingProp(FOVCircle, "Position", mousePos)
+                setDrawingProp(FOVCircle, "Radius", fovRadius)
+                setDrawingProp(FOVCircle, "Thickness", Options.FOVThickness.Value)
+                setDrawingProp(FOVCircle, "NumSides", fovNumSides)
+                setDrawingProp(FOVCircle, "Color", Options.FOVOutlineColor.Value)
+            end
+
+            if filledEnabled then
+                setDrawingProp(FOVFilledCircle, "Position", mousePos)
+                setDrawingProp(FOVFilledCircle, "Radius", fovRadius)
+                setDrawingProp(FOVFilledCircle, "NumSides", fovNumSides)
+                setDrawingProp(FOVFilledCircle, "Color", Options.FOVFilledColor.Value)
+                setDrawingProp(FOVFilledCircle, "Transparency", Options.FOVFilledTransparency.Value)
+            end
+
+            local tracerEnabled = Toggles.TracerEnabled.Value
+
+            if tracerEnabled and silentAimTarget.pos2D then
+                setDrawingProp(TracerLine, "Visible", true)
+                setDrawingProp(TracerLine, "From", mousePos)
+                setDrawingProp(TracerLine, "To", silentAimTarget.pos2D)
+                setDrawingProp(TracerLine, "Color", Options.TracerColor.Value)
+                setDrawingProp(TracerLine, "Thickness", Options.TracerThickness.Value)
+            else
+                setDrawingProp(TracerLine, "Visible", false)
+            end
+
+            local camPos = currentCamera.CFrame.Position
+            
+            if Toggles.ESPEnabled.Value then
+                updateVisualsForCache(ESPCache, currentCamera, camPos)
+                espWasEnabled = true
+            elseif espWasEnabled then
+                for _, data in pairs(ESPCache) do hideVisuals(data) end
+                espWasEnabled = false
+            end
+        end)
+    end))
+
+    local ExpectedArguments = {
+        FindPartOnRayWithIgnoreList = { ArgCountRequired = 3, Args = { "Instance", "Ray", "table", "boolean", "boolean" } },
+        FindPartOnRayWithWhitelist = { ArgCountRequired = 3, Args = { "Instance", "Ray", "table", "boolean" } },
+        FindPartOnRay = { ArgCountRequired = 2, Args = { "Instance", "Ray", "Instance", "boolean", "boolean" } },
+        Raycast = { ArgCountRequired = 3, Args = { "Instance", "Vector3", "Vector3", "RaycastParams" } }
+    }
+
+    local function ValidateArguments(Args, RayMethod)
+        local success, result = pcall(function()
+            local Matches = 0
+            if #Args < RayMethod.ArgCountRequired then return false end
+            for Pos, Argument in next, Args do
+                if typeof(Argument) == RayMethod.Args[Pos] then Matches = Matches + 1 end
+            end
+            return Matches >= RayMethod.ArgCountRequired
+        end)
+        return success and result or false
+    end
+
+    local function getDirection(Origin, Position)
+        return (Position - Origin).Unit * 1000
+    end
+
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(...)
+        local method = tostring(getnamecallmethod())
+        local args = {...}
+        local self = args[1]
+        
+        if Library and Library.Unloaded then return oldNamecall(...) end
+
+        if not checkcaller() then
+            local success, returnObj = pcall(function()
+                if method == "GetMouseLocation" or method == "getMouseLocation" then
+                    if self == UserInputService and Toggles.SilentAimEnabled.Value and silentAimTarget.pos2D and silentAimTarget.willHit then
+                        return silentAimTarget.pos2D
                     end
                 end
-            else
-                for i = 1, 14 do setDrawingProp(data.Skeleton[i], "Visible", false) end
-            end
-        else
-            hideVisuals(data)
-        end
-    end
-end
 
-local espWasEnabled = false
-local silentAimTarget = { part = nil, hitPos = nil }
-
-table.insert(Connections, RunService.RenderStepped:Connect(function()
-    local currentCamera = Workspace.CurrentCamera
-    if not currentCamera then return end
-
-    local mousePos = UserInputService:GetMouseLocation()
-    
-    if Toggles.SilentAimEnabled.Value then
-        local _, hitPart, hitPos = getClosestCharacterToMouse(mousePos, currentCamera, false)
-        silentAimTarget.part = hitPart
-        silentAimTarget.hitPos = hitPos
-    else
-        silentAimTarget.part = nil
-        silentAimTarget.hitPos = nil
-    end
-
-    local fovEnabled = Toggles.FOVEnabled.Value
-    local tracerEnabled = Toggles.TracerEnabled.Value
-
-    if fovEnabled then
-        local outlineEnabled = Toggles.FOVOutline.Value
-        local filledEnabled = Toggles.FOVFilled.Value
-        local fovRadius = Options.FOVRadius.Value
-        local fovNumSides = Options.FOVNumSides.Value
-
-        setDrawingProp(FOVCircle, "Visible", outlineEnabled)
-        setDrawingProp(FOVFilledCircle, "Visible", filledEnabled)
-
-        if outlineEnabled then
-            setDrawingProp(FOVCircle, "Position", mousePos)
-            setDrawingProp(FOVCircle, "Radius", fovRadius)
-            setDrawingProp(FOVCircle, "Thickness", Options.FOVThickness.Value)
-            setDrawingProp(FOVCircle, "NumSides", fovNumSides)
-            setDrawingProp(FOVCircle, "Color", Options.FOVOutlineColor.Value)
-        end
-
-        if filledEnabled then
-            setDrawingProp(FOVFilledCircle, "Position", mousePos)
-            setDrawingProp(FOVFilledCircle, "Radius", fovRadius)
-            setDrawingProp(FOVFilledCircle, "NumSides", fovNumSides)
-            setDrawingProp(FOVFilledCircle, "Color", Options.FOVFilledColor.Value)
-            setDrawingProp(FOVFilledCircle, "Transparency", Options.FOVFilledTransparency.Value)
-        end
-    else
-        setDrawingProp(FOVCircle, "Visible", false)
-        setDrawingProp(FOVFilledCircle, "Visible", false)
-    end
-
-    if tracerEnabled then
-        local targetPos = getClosestCharacterToMouse(mousePos, currentCamera, true)
-        if targetPos then
-            setDrawingProp(TracerLine, "Visible", true)
-            setDrawingProp(TracerLine, "From", mousePos)
-            setDrawingProp(TracerLine, "To", targetPos)
-            setDrawingProp(TracerLine, "Color", Options.TracerColor.Value)
-            setDrawingProp(TracerLine, "Thickness", Options.TracerThickness.Value)
-        else
-            setDrawingProp(TracerLine, "Visible", false)
-        end
-    else
-        setDrawingProp(TracerLine, "Visible", false)
-    end
-
-    local camPos = currentCamera.CFrame.Position
-    
-    if Toggles.ESPEnabled.Value then
-        updateVisualsForCache(ESPCache, currentCamera, camPos)
-        espWasEnabled = true
-    elseif espWasEnabled then
-        for _, data in pairs(ESPCache) do hideVisuals(data) end
-        espWasEnabled = false
-    end
-end))
-
-local ExpectedArguments = {
-    Raycast = {
-        ArgCountRequired = 3,
-        Args = {
-            "Instance", "Vector3", "Vector3", "RaycastParams"
-        }
-    }
-}
-
-local function ValidateArguments(Args, RayMethod)
-    local Matches = 0
-    if #Args < RayMethod.ArgCountRequired then
-        return false
-    end
-    for Pos, Argument in next, Args do
-        if typeof(Argument) == RayMethod.Args[Pos] then
-            Matches = Matches + 1
-        end
-    end
-    return Matches >= RayMethod.ArgCountRequired
-end
-
-local function getDirection(Origin, Position)
-    return (Position - Origin).Unit * 1000
-end
-
-local oldNamecall
-oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(...)
-    local Method = tostring(getnamecallmethod())
-    local Arguments = {...}
-    local self = Arguments[1]
-    
-    if Library and Library.Unloaded then return oldNamecall(...) end
-
-    local chance = CalculateChance(Options.Hitchance.Value)
-
-    if Toggles.SilentAimEnabled.Value and self == Workspace and not checkcaller() and chance == true then
-        if Method == "Raycast" and Options.SilentAimMethod.Value == 'Raycast' then
-            local calling_script = getcallingscript and getcallingscript()
-            if calling_script and (calling_script.Name == "CameraModule" or calling_script.Name == "Poppercam" or calling_script.Name == "ZoomController" or calling_script.Name == "TransparencyController") then
-                return oldNamecall(...)
-            end
-            
-            if ValidateArguments(Arguments, ExpectedArguments.Raycast) then
-                local A_Origin = Arguments[2]
-                local HitPart = silentAimTarget.part
-                local HitPos = silentAimTarget.hitPos
-
-                if HitPart and HitPos then
-                    local finalHitPos = HitPos
-                    if Toggles.PredictionEnabled.Value then
-                        finalHitPos = finalHitPos + (HitPart.Velocity * Options.PredictionAmount.Value)
+                if Toggles.SilentAimEnabled.Value and self == Workspace and silentAimTarget.willHit then
+                    local calling_script = getcallingscript and getcallingscript()
+                    if calling_script and (calling_script.Name == "CameraModule" or calling_script.Name == "Poppercam" or calling_script.Name == "ZoomController" or calling_script.Name == "TransparencyController") then
+                        return nil
                     end
                     
-                    Arguments[3] = getDirection(A_Origin, finalHitPos)
-                    return oldNamecall(unpack(Arguments))
+                    local HitPart = silentAimTarget.part
+                    local HitPos = silentAimTarget.hitPos
+
+                    if HitPart and HitPos then
+                        local silentMethod = Options.SilentAimMethod.Value
+                        if method == "Raycast" and silentMethod == 'Raycast' then
+                            if ValidateArguments(args, ExpectedArguments.Raycast) then
+                                args[3] = getDirection(args[2], HitPos)
+                                return args
+                            end
+                        elseif method == "FindPartOnRayWithIgnoreList" and silentMethod == method then
+                            if ValidateArguments(args, ExpectedArguments.FindPartOnRayWithIgnoreList) then
+                                local Origin = args[2].Origin
+                                args[2] = Ray.new(Origin, getDirection(Origin, HitPos))
+                                return args
+                            end
+                        elseif method == "FindPartOnRayWithWhitelist" and silentMethod == method then
+                            if ValidateArguments(args, ExpectedArguments.FindPartOnRayWithWhitelist) then
+                                local Origin = args[2].Origin
+                                args[2] = Ray.new(Origin, getDirection(Origin, HitPos))
+                                return args
+                            end
+                        elseif (method == "FindPartOnRay" or method == "findPartOnRay") and silentMethod == "FindPartOnRay" then
+                            if ValidateArguments(args, ExpectedArguments.FindPartOnRay) then
+                                local Origin = args[2].Origin
+                                args[2] = Ray.new(Origin, getDirection(Origin, HitPos))
+                                return args
+                            end
+                        end
+                    end
+                end
+                return nil
+            end)
+
+            if success and returnObj ~= nil then
+                if type(returnObj) == "table" and returnObj[1] == self then
+                    return oldNamecall(unpack(returnObj))
+                else
+                    return returnObj
                 end
             end
         end
-    end
-    
-    return oldNamecall(...)
-end))
-
-local oldIndex = nil 
-oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, Index)
-    if checkcaller() or (Library and Library.Unloaded) then return oldIndex(self, Index) end
-
-    if self == PlayerMouse and Options.SilentAimMethod.Value == 'Mouse.Hit' then
-        local cachedPart = silentAimTarget.part
-        local cachedHitPos = silentAimTarget.hitPos
         
-        if Toggles.SilentAimEnabled.Value and cachedPart and cachedHitPos then
-            local chance = Options.Hitchance.Value
-            if CalculateChance(chance) then
-                local hitPos = cachedHitPos
-                if Toggles.PredictionEnabled.Value then
-                    hitPos = hitPos + (cachedPart.Velocity * Options.PredictionAmount.Value)
-                end
-                
+        return oldNamecall(...)
+    end))
+
+    local oldIndex = nil 
+    oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, Index)
+        if checkcaller() or (Library and Library.Unloaded) then return oldIndex(self, Index) end
+
+        local success, result = pcall(function()
+            if self == PlayerMouse and Toggles.SilentAimEnabled.Value and silentAimTarget.willHit then
                 if Index == "Target" or Index == "target" then 
-                    return cachedPart
+                    if Options.SilentAimMethod.Value == 'Mouse.Hit' and silentAimTarget.part then return silentAimTarget.part end
                 elseif Index == "Hit" or Index == "hit" then 
-                    return CFrame.new(hitPos)
+                    if Options.SilentAimMethod.Value == 'Mouse.Hit' and silentAimTarget.hitPos then return CFrame.new(silentAimTarget.hitPos) end
+                elseif Index == "X" or Index == "x" then
+                    if silentAimTarget.pos2D then return silentAimTarget.pos2D.X end
+                elseif Index == "Y" or Index == "y" then
+                    if silentAimTarget.pos2D then return silentAimTarget.pos2D.Y end
                 end
             end
-        end
-    end
+            return nil
+        end)
+        
+        if success and result ~= nil then return result end
+        return oldIndex(self, Index)
+    end))
 
-    return oldIndex(self, Index)
-end))
+    SaveManager:LoadAutoloadConfig()
 
-SaveManager:LoadAutoloadConfig()
-
-Library:OnUnload(function()
-    for _, conn in ipairs(Connections) do
-        conn:Disconnect()
-    end
-    
-    if FOVCircle then FOVCircle:Remove() end
-    if FOVFilledCircle then FOVFilledCircle:Remove() end
-    if TracerLine then TracerLine:Remove() end
-    
-    table.clear(drawingPropCache)
-    
-    if fullbrightConnection then
-        fullbrightConnection:Disconnect()
-    end
-    
-    for player, _ in pairs(ESPCache) do
-        removeESPData(ESPCache, player)
-    end
-    
-    if OriginalLighting.Brightness then
-        Lighting.Brightness = OriginalLighting.Brightness
-        Lighting.ClockTime = OriginalLighting.ClockTime
-        Lighting.FogEnd = OriginalLighting.FogEnd
-        Lighting.GlobalShadows = OriginalLighting.GlobalShadows
-        Lighting.OutdoorAmbient = OriginalLighting.OutdoorAmbient
-    end
-    
-    Library.Unloaded = true
+    Library:OnUnload(function()
+        pcall(function()
+            for _, conn in ipairs(Connections) do pcall(function() conn:Disconnect() end) end
+            if FOVCircle then pcall(function() FOVCircle:Remove() end) end
+            if FOVFilledCircle then pcall(function() FOVFilledCircle:Remove() end) end
+            if TracerLine then pcall(function() TracerLine:Remove() end) end
+            table.clear(drawingPropCache)
+            
+            if fullbrightConnection then pcall(function() fullbrightConnection:Disconnect() end) end
+            
+            for player, _ in pairs(ESPCache) do removeESPData(ESPCache, player) end
+            
+            if OriginalLighting.Brightness then
+                pcall(function()
+                    Lighting.Brightness = OriginalLighting.Brightness
+                    Lighting.ClockTime = OriginalLighting.ClockTime
+                    Lighting.FogEnd = OriginalLighting.FogEnd
+                    Lighting.GlobalShadows = OriginalLighting.GlobalShadows
+                    Lighting.OutdoorAmbient = OriginalLighting.OutdoorAmbient
+                end)
+            end
+            
+            Library.Unloaded = true
+        end)
+    end)
 end)
